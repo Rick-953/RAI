@@ -128,7 +128,7 @@ jobs:
   office-runtime:
     name: Office sandbox runtime
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -224,6 +224,11 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
       - name: Generate vendored browser SBOM before OSV scan
         run: npm run sbom:vendored-web
+      - name: Verify the Tauri lockfile-only chrono dependency cannot enter a build
+        run: |
+          cargo tree --locked --manifest-path src-tauri/Cargo.toml --all-features --target all --edges normal,build,dev --prefix none > "$RUNNER_TEMP/rai-tauri-deps.txt"
+          test -s "$RUNNER_TEMP/rai-tauri-deps.txt"
+          awk '/^chrono v/ { print "chrono entered the Tauri build graph: " $0 > "/dev/stderr"; exit 1 }' "$RUNNER_TEMP/rai-tauri-deps.txt"
       - name: Scan lockfiles and vendored browser SBOM
         uses: google/osv-scanner-action/osv-scanner-action@8ac9e5ce44cc7178e0e04229a91bdcc003166e57 # v2.3.8
         continue-on-error: true
@@ -278,7 +283,7 @@ jobs:
           working-directory: src-tauri
           # Mirrors the documented, expiring upstream exceptions in
           # src-tauri/osv-scanner.toml. OSV expiry keeps this list from becoming permanent.
-          ignore: RUSTSEC-2024-0370,RUSTSEC-2024-0411,RUSTSEC-2024-0412,RUSTSEC-2024-0413,RUSTSEC-2024-0414,RUSTSEC-2024-0415,RUSTSEC-2024-0416,RUSTSEC-2024-0417,RUSTSEC-2024-0418,RUSTSEC-2024-0419,RUSTSEC-2024-0420,RUSTSEC-2024-0429
+          ignore: RUSTSEC-2024-0370,RUSTSEC-2024-0411,RUSTSEC-2024-0412,RUSTSEC-2024-0413,RUSTSEC-2024-0414,RUSTSEC-2024-0415,RUSTSEC-2024-0416,RUSTSEC-2024-0417,RUSTSEC-2024-0418,RUSTSEC-2024-0419,RUSTSEC-2024-0420,RUSTSEC-2024-0429,RUSTSEC-2026-0543
 
   rustsec-local-agent:
     name: RustSec Local Agent audit

@@ -52,7 +52,7 @@ pub fn run_with_os_confirmation(
     set_owner_only(temp.path(), true)?;
     let request_path = temp.path().join("request.json");
     let response_path = temp.path().join("response.json");
-    let now = chrono::Utc::now().timestamp();
+    let now = crate::unix_timestamp();
     let mut request = ElevatedRequest {
         schema: "rai-elevated-request/v1".into(),
         nonce: Uuid::new_v4().to_string(),
@@ -92,7 +92,7 @@ pub fn run_worker(request_path: &Path, response_path: &Path, config_path: &Path)
     if request.schema != "rai-elevated-request/v1" || Uuid::parse_str(&request.nonce).is_err() {
         bail!("invalid_elevated_request");
     }
-    let now = chrono::Utc::now().timestamp();
+    let now = crate::unix_timestamp();
     if request.expires_at < now
         || request.issued_at > now + 5
         || request.expires_at - request.issued_at > REQUEST_TTL_SECONDS

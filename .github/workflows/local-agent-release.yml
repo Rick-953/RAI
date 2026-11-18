@@ -43,7 +43,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-14
+          - os: macos-15
             target: aarch64-apple-darwin
             binary: rai-agent
             asset: rai-agent-aarch64-apple-darwin.tar.gz

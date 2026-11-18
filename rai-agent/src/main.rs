@@ -8,6 +8,17 @@ mod tools;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+fn unix_timestamp() -> i64 {
+    match SystemTime::now().duration_since(UNIX_EPOCH) {
+        Ok(elapsed) => elapsed.as_secs() as i64,
+        Err(error) => {
+            let before_epoch = error.duration();
+            -(before_epoch.as_secs() as i64) - i64::from(before_epoch.subsec_nanos() != 0)
+        }
+    }
+}
 
 #[derive(Parser)]
 #[command(name = "rai-agent", version, about = "RAI Local Agent")]

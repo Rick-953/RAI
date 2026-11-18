@@ -150,6 +150,11 @@
     "yazl": "3.3.1"
   },
   "overrides": {
+    "sqlite3": {
+      "node-gyp": {
+        "tinyglobby": "npm:glob@14.0.6"
+      }
+    },
     "body-parser": "2.4.0",
     "tar": "7.5.22",
     "undici": "6.29.1",
