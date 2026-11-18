@@ -1,3 +1,9 @@
+## 0.13.53 - adaptive interactions
+
+- Add 14 task-driven controls and stable-ID workspace updates. On desktop the right panel opens only as needed, and both sidebar widths are device-local. On phones controls stay inline.
+- After nine or more completed tool rounds, allow a final summary in the same continuation. Short turns keep one answer, and later failures do not replay tools.
+- Keep GPT Image 2.6 reference attachments and 2K output. Use an audited SQLite build dependency graph and keep the Local Agent free of `chrono`.
+
 ## 0.13.52 - 2026-11-13
 
 - Support 2K output and conversation reference images in GPT Image 2.6; validate attachment ownership before charging, refund failed or cancelled requests.

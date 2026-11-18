@@ -356,7 +356,7 @@ impl NativeHost {
         self.audit.append(&AuditEntry {
             run_id: run_id.to_string(),
             tool: tool.to_string(),
-            timestamp: chrono::Utc::now().timestamp(),
+            timestamp: crate::unix_timestamp(),
             duration_ms: result.duration_ms,
             success: result.success,
             input_summary: redact(&canonical_json(params)),
@@ -377,7 +377,7 @@ impl NativeHost {
             "deviceId": required_string(envelope, "deviceId")?,
             "toolCallId": required_string(envelope, "toolCallId")?,
             "sequence": envelope.get("sequence").and_then(Value::as_u64).context("sequence required")?,
-            "completedAt": chrono::Utc::now().timestamp(),
+            "completedAt": crate::unix_timestamp(),
             "resultSha256": hex::encode(Sha256::digest(canonical_json(result).as_bytes()))
         });
         let signature = self
@@ -399,7 +399,7 @@ impl NativeHost {
             .get("expiresAt")
             .and_then(Value::as_i64)
             .context("expiresAt required")?;
-        if expires_at < chrono::Utc::now().timestamp() {
+        if expires_at < crate::unix_timestamp() {
             bail!("tool_envelope_expired");
         }
         let key_id = required_string(envelope, "keyId")?;

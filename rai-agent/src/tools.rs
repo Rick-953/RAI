@@ -176,7 +176,7 @@ fn create_artifact(config: &AgentConfig, params: &Value) -> Result<(String, Valu
         .unwrap_or_else(|| {
             PathBuf::from(format!(
                 "rai-artifact-{}.{}",
-                chrono::Utc::now().timestamp(),
+                crate::unix_timestamp(),
                 extension_for(format)
             ))
         });

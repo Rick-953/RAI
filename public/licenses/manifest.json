@@ -3,10 +3,10 @@
   "product": "RAI Web",
   "scopeNote": "Production npm lock dependencies; browser libraries and fonts; all locked Cargo dependencies for the optional RAI Desktop and Local Agent, including build and target-specific crates. Development-only npm tools are excluded. Brand names and logos belong to their respective owners.",
   "inputs": {
-    "package-lock.json": "d66547ef17f88aa3876218824402e85b181a42f8d741b090b4a485f16bcd0904",
+    "package-lock.json": "622b0b75ece3e6f25434b6cecc60deaa4ec71648ac99a5cdb77a9d526ed4c6fb",
     "public/lib/vendor-manifest.json": "6a86dcbb79a57b7ffa8a844f7f0188f3c1e5427bd7dfe4445bfb94d870277d8e",
     "src-tauri/Cargo.lock": "d57240d860ee4a350c59356711296a80f3fef7902e4d7f9689ef1bb4882a08b9",
-    "rai-agent/Cargo.lock": "e337bb34fa0e1ad90d3d1bfef33d7d689d52ce817712d41af428149e0336491d"
+    "rai-agent/Cargo.lock": "e21e5bc9cb46cab50d040e7434fac7e3978810c1527adb789d9966882feab8c6"
   },
   "components": [
     {
@@ -370,31 +370,6 @@
       ]
     },
     {
-      "id": "cargo-android_system_properties-0.1.6",
-      "name": "android_system_properties",
-      "version": "0.1.6",
-      "license": "MIT OR Apache-2.0",
-      "source": "https://github.com/nical/android_system_properties",
-      "scope": "desktop-agent",
-      "usedBy": [
-        "RAI Local Agent"
-      ],
-      "archiveSha256": "ae221649c9976a6f6c56ae1facf410f3ddb33cc661c4b7b61020a912d4237fbc",
-      "sourceArchive": "https://static.crates.io/crates/android_system_properties/android_system_properties-0.1.6.crate",
-      "notices": [
-        {
-          "name": "LICENSE-APACHE",
-          "path": "texts/216486f29671a4262efe32af6d84a75bef398127f8c5f369b5c8305983887a06.txt",
-          "sha256": "216486f29671a4262efe32af6d84a75bef398127f8c5f369b5c8305983887a06"
-        },
-        {
-          "name": "LICENSE-MIT",
-          "path": "texts/80f275e90d799911ed3830a7f242a2ef5a4ade2092fe0aa07bfb2d2cf2f2b95e.txt",
-          "sha256": "80f275e90d799911ed3830a7f242a2ef5a4ade2092fe0aa07bfb2d2cf2f2b95e"
-        }
-      ]
-    },
-    {
       "id": "cargo-anstream-1.0.0",
       "name": "anstream",
       "version": "1.0.0",
@@ -653,8 +628,7 @@
       "source": "https://github.com/cuviper/autocfg",
       "scope": "desktop-agent",
       "usedBy": [
-        "RAI Desktop",
-        "RAI Local Agent"
+        "RAI Desktop"
       ],
       "archiveSha256": "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53",
       "sourceArchive": "https://static.crates.io/crates/autocfg/autocfg-1.5.1.crate",
@@ -1287,31 +1261,6 @@
       ]
     },
     {
-      "id": "cargo-cc-1.4.2",
-      "name": "cc",
-      "version": "1.4.2",
-      "license": "MIT OR Apache-2.0",
-      "source": "https://github.com/rust-lang/cc-rs",
-      "scope": "desktop-agent",
-      "usedBy": [
-        "RAI Local Agent"
-      ],
-      "archiveSha256": "5d262e149917187838d5b42777c8253bcb64500067342904e7d429499a6f277e",
-      "sourceArchive": "https://static.crates.io/crates/cc/cc-1.4.2.crate",
-      "notices": [
-        {
-          "name": "LICENSE-APACHE",
-          "path": "texts/a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2.txt",
-          "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"
-        },
-        {
-          "name": "LICENSE-MIT",
-          "path": "texts/378f5840b258e2779c39418f3f2d7b2ba96f1c7917dd6be0713f88305dbda397.txt",
-          "sha256": "378f5840b258e2779c39418f3f2d7b2ba96f1c7917dd6be0713f88305dbda397"
-        }
-      ]
-    },
-    {
       "id": "cargo-cesu8-1.1.0",
       "name": "cesu8",
       "version": "1.1.0",
@@ -1410,8 +1359,7 @@
       "source": "https://github.com/chronotope/chrono",
       "scope": "desktop-agent",
       "usedBy": [
-        "RAI Desktop",
-        "RAI Local Agent"
+        "RAI Desktop"
       ],
       "archiveSha256": "1aa79e62e7697b8e29b513a68abacf485adcd1fe8284a4316c5ae868e6633327",
       "sourceArchive": "https://static.crates.io/crates/chrono/chrono-0.4.45.crate",
@@ -1677,8 +1625,7 @@
       "source": "https://github.com/servo/core-foundation-rs",
       "scope": "desktop-agent",
       "usedBy": [
-        "RAI Desktop",
-        "RAI Local Agent"
+        "RAI Desktop"
       ],
       "archiveSha256": "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b",
       "sourceArchive": "https://static.crates.io/crates/core-foundation-sys/core-foundation-sys-0.8.7.crate",
@@ -2934,31 +2881,6 @@
           "name": "LICENSE-MIT",
           "path": "texts/9dd44491b4cf95dcfa2963943b3ae91bff9a78d13049a9e0b53e0d0b0a9c8f4e.txt",
           "sha256": "9dd44491b4cf95dcfa2963943b3ae91bff9a78d13049a9e0b53e0d0b0a9c8f4e"
-        }
-      ]
-    },
-    {
-      "id": "cargo-find-msvc-tools-0.1.10",
-      "name": "find-msvc-tools",
-      "version": "0.1.10",
-      "license": "MIT OR Apache-2.0",
-      "source": "https://github.com/rust-lang/cc-rs",
-      "scope": "desktop-agent",
-      "usedBy": [
-        "RAI Local Agent"
-      ],
-      "archiveSha256": "26b73573e6edcd2af0cdf47bd6cb58f0b3839491263c314eaad1ccf24430e1de",
-      "sourceArchive": "https://static.crates.io/crates/find-msvc-tools/find-msvc-tools-0.1.10.crate",
-      "notices": [
-        {
-          "name": "LICENSE-APACHE",
-          "path": "texts/a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2.txt",
-          "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"
-        },
-        {
-          "name": "LICENSE-MIT",
-          "path": "texts/378f5840b258e2779c39418f3f2d7b2ba96f1c7917dd6be0713f88305dbda397.txt",
-          "sha256": "378f5840b258e2779c39418f3f2d7b2ba96f1c7917dd6be0713f88305dbda397"
         }
       ]
     },
@@ -4281,8 +4203,7 @@
       "source": "https://github.com/strawlab/iana-time-zone",
       "scope": "desktop-agent",
       "usedBy": [
-        "RAI Desktop",
-        "RAI Local Agent"
+        "RAI Desktop"
       ],
       "archiveSha256": "e31bc9ad994ba00e440a8aa5c9ef0ec67d5cb5e5cb0cc7f8b744a35b389cc470",
       "sourceArchive": "https://static.crates.io/crates/iana-time-zone/iana-time-zone-0.1.65.crate",
@@ -4307,8 +4228,7 @@
       "source": "https://github.com/strawlab/iana-time-zone",
       "scope": "desktop-agent",
       "usedBy": [
-        "RAI Desktop",
-        "RAI Local Agent"
+        "RAI Desktop"
       ],
       "archiveSha256": "f31827a206f56af32e590ba56d5d2d085f558508192593743f16b2306495269f",
       "sourceArchive": "https://static.crates.io/crates/iana-time-zone-haiku/iana-time-zone-haiku-0.1.2.crate",
@@ -5930,8 +5850,7 @@
       "source": "https://github.com/rust-num/num-traits",
       "scope": "desktop-agent",
       "usedBy": [
-        "RAI Desktop",
-        "RAI Local Agent"
+        "RAI Desktop"
       ],
       "archiveSha256": "071dfc062690e90b734c0b2273ce72ad0ffa95f0c74596bc250dcfd960262841",
       "sourceArchive": "https://static.crates.io/crates/num-traits/num-traits-0.2.19.crate",
@@ -8334,8 +8253,7 @@
       "source": "https://github.com/comex/rust-shlex",
       "scope": "desktop-agent",
       "usedBy": [
-        "RAI Desktop",
-        "RAI Local Agent"
+        "RAI Desktop"
       ],
       "archiveSha256": "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba",
       "sourceArchive": "https://static.crates.io/crates/shlex/shlex-2.0.1.crate",
@@ -11265,8 +11183,7 @@
       "source": "https://github.com/microsoft/windows-rs",
       "scope": "desktop-agent",
       "usedBy": [
-        "RAI Desktop",
-        "RAI Local Agent"
+        "RAI Desktop"
       ],
       "archiveSha256": "b8e83a14d34d0623b51dce9581199302a221863196a1dde71a7663a4c2be9deb",
       "sourceArchive": "https://static.crates.io/crates/windows-core/windows-core-0.62.2.crate",
@@ -11316,8 +11233,7 @@
       "source": "https://github.com/microsoft/windows-rs",
       "scope": "desktop-agent",
       "usedBy": [
-        "RAI Desktop",
-        "RAI Local Agent"
+        "RAI Desktop"
       ],
       "archiveSha256": "053e2e040ab57b9dc951b72c264860db7eb3b0200ba345b4e4c3b14f67855ddf",
       "sourceArchive": "https://static.crates.io/crates/windows-implement/windows-implement-0.60.2.crate",
@@ -11342,8 +11258,7 @@
       "source": "https://github.com/microsoft/windows-rs",
       "scope": "desktop-agent",
       "usedBy": [
-        "RAI Desktop",
-        "RAI Local Agent"
+        "RAI Desktop"
       ],
       "archiveSha256": "3f316c4a2570ba26bbec722032c4099d8c8bc095efccdc15688708623367e358",
       "sourceArchive": "https://static.crates.io/crates/windows-interface/windows-interface-0.59.3.crate",
@@ -11419,8 +11334,7 @@
       "source": "https://github.com/microsoft/windows-rs",
       "scope": "desktop-agent",
       "usedBy": [
-        "RAI Desktop",
-        "RAI Local Agent"
+        "RAI Desktop"
       ],
       "archiveSha256": "7781fa89eaf60850ac3d2da7af8e5242a5ea78d1a11c49bf2910bb5a73853eb5",
       "sourceArchive": "https://static.crates.io/crates/windows-result/windows-result-0.4.1.crate",
@@ -11445,8 +11359,7 @@
       "source": "https://github.com/microsoft/windows-rs",
       "scope": "desktop-agent",
       "usedBy": [
-        "RAI Desktop",
-        "RAI Local Agent"
+        "RAI Desktop"
       ],
       "archiveSha256": "7837d08f69c77cf6b07689544538e017c1bfcf57e34b4c0ff58e6c2cd3b37091",
       "sourceArchive": "https://static.crates.io/crates/windows-strings/windows-strings-0.5.1.crate",
@@ -13635,6 +13548,24 @@
       ]
     },
     {
+      "id": "npm-1554dc7e806a4c4f",
+      "name": "@isaacs/nonrecursive-glob-match",
+      "version": "1.1.0",
+      "license": "BlueOak-1.0.0",
+      "source": "https://www.npmjs.com/package/@isaacs/nonrecursive-glob-match/v/1.1.0",
+      "scope": "server",
+      "dependencyPath": "node_modules/@isaacs/nonrecursive-glob-match",
+      "integrity": "sha512-GPm/Dbvk5RLmhRnxXIa7nTpK0xtl4E0wj0MslsuNiJ1FIROU+2+9lgUC/dgF7Ey4QCWhfEsgxilMRMCdHPfDfw==",
+      "sourceArchive": "https://registry.npmjs.org/@isaacs/nonrecursive-glob-match/-/nonrecursive-glob-match-1.1.0.tgz",
+      "notices": [
+        {
+          "name": "LICENSE.md",
+          "path": "texts/8a1af140fdfbf5afd3df27f7e662f989c5b963a300020dfafce42033cae9e004.txt",
+          "sha256": "8a1af140fdfbf5afd3df27f7e662f989c5b963a300020dfafce42033cae9e004"
+        }
+      ]
+    },
+    {
       "id": "npm-ca5834d2ae61ad1b",
       "name": "@levischuck/tiny-cbor",
       "version": "0.2.11",
@@ -13959,13 +13890,13 @@
       ]
     },
     {
-      "id": "npm-fe05d336abf624ad",
+      "id": "npm-328f9c7df4c51d25",
       "name": "abbrev",
       "version": "4.0.0",
       "license": "ISC",
       "source": "https://github.com/npm/abbrev-js",
       "scope": "server",
-      "dependencyPath": "node_modules/node-gyp/node_modules/abbrev",
+      "dependencyPath": "node_modules/abbrev",
       "integrity": "sha512-a1wflyaL0tHtJSmLSOVybYhy22vRih4eduhhrkcjgrWGnRfrZtovJ2FRjxuTtkkj47O/baf0R86QU5OuYpz8fA==",
       "sourceArchive": "https://registry.npmjs.org/abbrev/-/abbrev-4.0.0.tgz",
       "notices": [
@@ -14067,6 +13998,24 @@
       ]
     },
     {
+      "id": "npm-e2485ae88eaf7c74",
+      "name": "balanced-match",
+      "version": "4.0.4",
+      "license": "MIT",
+      "source": "https://github.com/juliangruber/balanced-match",
+      "scope": "server",
+      "dependencyPath": "node_modules/balanced-match",
+      "integrity": "sha512-BLrgEcRTwX2o6gGxGOCNyMvGSp35YofuYzw9h1IMTRmKqttAZZVU67bdb9Pr2vUHA8+j3i2tJfjO6C6+4myGTA==",
+      "sourceArchive": "https://registry.npmjs.org/balanced-match/-/balanced-match-4.0.4.tgz",
+      "notices": [
+        {
+          "name": "LICENSE.md",
+          "path": "texts/d408f38ffa3355c5faec517153295338892eb0f1ea43f57874bb23c6075979b5.txt",
+          "sha256": "d408f38ffa3355c5faec517153295338892eb0f1ea43f57874bb23c6075979b5"
+        }
+      ]
+    },
+    {
       "id": "npm-5892852bd4841e8d",
       "name": "base64-js",
       "version": "1.5.1",
@@ -14153,6 +14102,24 @@
           "name": "LICENSE",
           "path": "texts/23d466b1b134b415b66fa50c6526b4cf3e7b9258554da88d3abb371721e7ce68.txt",
           "sha256": "23d466b1b134b415b66fa50c6526b4cf3e7b9258554da88d3abb371721e7ce68"
+        }
+      ]
+    },
+    {
+      "id": "npm-416f0dd3db142aba",
+      "name": "brace-expansion",
+      "version": "5.0.13",
+      "license": "MIT",
+      "source": "https://github.com/juliangruber/brace-expansion",
+      "scope": "server",
+      "dependencyPath": "node_modules/brace-expansion",
+      "integrity": "sha512-Vh3dmFbc4wZeox7M9I/0L9GfFd83Su4+yCck/OF9Gi/P/dAHn0RT7X4K9R7gMNMhDck3DvhR6QXsnQdjjgwNvQ==",
+      "sourceArchive": "https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.13.tgz",
+      "notices": [
+        {
+          "name": "LICENSE",
+          "path": "texts/9c63a23124d68cd30cd316a94a1a0bca34f032786df6df69fc4b5f136bac8d2e.txt",
+          "sha256": "9c63a23124d68cd30cd316a94a1a0bca34f032786df6df69fc4b5f136bac8d2e"
         }
       ]
     },
@@ -14877,24 +14844,6 @@
       ]
     },
     {
-      "id": "npm-2b5fa8f52ca87b5b",
-      "name": "fdir",
-      "version": "6.5.0",
-      "license": "MIT",
-      "source": "https://github.com/thecodrr/fdir",
-      "scope": "server",
-      "dependencyPath": "node_modules/fdir",
-      "integrity": "sha512-tIbYtZbucOs0BRGqPJkshJUYdL+SDH7dVM8gjy+ERp3WAUjLEFJE+02kanyHtwjWOnwrKYBiwAmM0p4kLJAnXg==",
-      "sourceArchive": "https://registry.npmjs.org/fdir/-/fdir-6.5.0.tgz",
-      "notices": [
-        {
-          "name": "LICENSE",
-          "path": "texts/9a39f2aadab11a3697edd668ff2d8ad885b649737b7ab4d3bf12b34e5ada0c86.txt",
-          "sha256": "9a39f2aadab11a3697edd668ff2d8ad885b649737b7ab4d3bf12b34e5ada0c86"
-        }
-      ]
-    },
-    {
       "id": "npm-2e30399de933dcf6",
       "name": "file-uri-to-path",
       "version": "1.0.0",
@@ -15089,6 +15038,24 @@
           "name": "LICENSE",
           "path": "texts/435a6722c786b0a56fbe7387028f1d9d3f3a2d0fb615bb8fee118727c3f59b7b.txt",
           "sha256": "435a6722c786b0a56fbe7387028f1d9d3f3a2d0fb615bb8fee118727c3f59b7b"
+        }
+      ]
+    },
+    {
+      "id": "npm-e2eef8d8e7761c0b",
+      "name": "glob",
+      "version": "14.0.6",
+      "license": "BlueOak-1.0.0",
+      "source": "https://www.npmjs.com/package/glob/v/14.0.6",
+      "scope": "server",
+      "dependencyPath": "node_modules/tinyglobby",
+      "integrity": "sha512-OwXjVP2svY5EyLY75Vek96C8qK43gqrt4xsZ+qSILdnaEiJPXkd62mcfUSNx/TQErQRdu5uM5kF67sfONragKw==",
+      "sourceArchive": "https://registry.npmjs.org/glob/-/glob-14.0.6.tgz",
+      "notices": [
+        {
+          "name": "LICENSE.md",
+          "path": "texts/a49c9ba464796f65b59fca3f1e6ca40912df1e859f575383223f7ec6c5baae09.txt",
+          "sha256": "a49c9ba464796f65b59fca3f1e6ca40912df1e859f575383223f7ec6c5baae09"
         }
       ]
     },
@@ -15561,6 +15528,24 @@
       ]
     },
     {
+      "id": "npm-7df55bb1ef9cbffd",
+      "name": "lru-cache",
+      "version": "11.5.3",
+      "license": "BlueOak-1.0.0",
+      "source": "https://www.npmjs.com/package/lru-cache/v/11.5.3",
+      "scope": "server",
+      "dependencyPath": "node_modules/path-scurry/node_modules/lru-cache",
+      "integrity": "sha512-U4N8FgzmWxc8k1VH8Kr6lQg18U7Fjvby6wXHVRX/ZZ7IwWbRMgrRbP0Wrb5q5NVinryp4SQampHKdvtecItxUg==",
+      "sourceArchive": "https://registry.npmjs.org/lru-cache/-/lru-cache-11.5.3.tgz",
+      "notices": [
+        {
+          "name": "LICENSE.md",
+          "path": "texts/8a1af140fdfbf5afd3df27f7e662f989c5b963a300020dfafce42033cae9e004.txt",
+          "sha256": "8a1af140fdfbf5afd3df27f7e662f989c5b963a300020dfafce42033cae9e004"
+        }
+      ]
+    },
+    {
       "id": "npm-2e6b80fbdf98ad13",
       "name": "math-intrinsics",
       "version": "1.1.0",
@@ -15849,6 +15834,24 @@
       ]
     },
     {
+      "id": "npm-f36a18270b6db54e",
+      "name": "minimatch",
+      "version": "11.0.9",
+      "license": "BlueOak-1.0.0",
+      "source": "https://www.npmjs.com/package/minimatch/v/11.0.9",
+      "scope": "server",
+      "dependencyPath": "node_modules/minimatch",
+      "integrity": "sha512-KCFkfyjqerNlSstjlhIGNXIKZGA/6O4V4RlhZ+Dsr621SPPw0mzlypE9D9ZOoPiVefHID+j7/XuMMlqfD/F60Q==",
+      "sourceArchive": "https://registry.npmjs.org/minimatch/-/minimatch-11.0.9.tgz",
+      "notices": [
+        {
+          "name": "LICENSE.md",
+          "path": "texts/2c7c5d22ed5a8ee968c64757710979afcd77438c48b4a265b94e615babd8a901.txt",
+          "sha256": "2c7c5d22ed5a8ee968c64757710979afcd77438c48b4a265b94e615babd8a901"
+        }
+      ]
+    },
+    {
       "id": "npm-085484e408a39549",
       "name": "minimist",
       "version": "1.2.8",
@@ -16100,13 +16103,13 @@
       ]
     },
     {
-      "id": "npm-dac761b59fe85892",
+      "id": "npm-ec9a1cc62ca0ba11",
       "name": "nopt",
       "version": "9.0.0",
       "license": "ISC",
       "source": "https://github.com/npm/nopt",
       "scope": "server",
-      "dependencyPath": "node_modules/node-gyp/node_modules/nopt",
+      "dependencyPath": "node_modules/nopt",
       "integrity": "sha512-Zhq3a+yFKrYwSBluL4H9XP3m3y5uvQkB/09CwDruCiRmR/UJYnn9W4R48ry0uGC70aeTPKLynBtscP9efFFcPw==",
       "sourceArchive": "https://registry.npmjs.org/nopt/-/nopt-9.0.0.tgz",
       "notices": [
@@ -16305,6 +16308,24 @@
       ]
     },
     {
+      "id": "npm-0089257f4ef09b91",
+      "name": "path-scurry",
+      "version": "3.0.0",
+      "license": "BlueOak-1.0.0",
+      "source": "https://github.com/isaacs/path-scurry",
+      "scope": "server",
+      "dependencyPath": "node_modules/path-scurry",
+      "integrity": "sha512-1pTbQqH1wIwMi/eleQ5leFTTCkzFsPcgXNjwOA8YGGW/W4/kHT3dssE7Z6NH+zuqNLOzOB0uaD61yl7cAcVhgg==",
+      "sourceArchive": "https://registry.npmjs.org/path-scurry/-/path-scurry-3.0.0.tgz",
+      "notices": [
+        {
+          "name": "LICENSE.md",
+          "path": "texts/8a1af140fdfbf5afd3df27f7e662f989c5b963a300020dfafce42033cae9e004.txt",
+          "sha256": "8a1af140fdfbf5afd3df27f7e662f989c5b963a300020dfafce42033cae9e004"
+        }
+      ]
+    },
+    {
       "id": "npm-b738fd2a1b5f194e",
       "name": "path-to-regexp",
       "version": "8.4.2",
@@ -16337,24 +16358,6 @@
           "name": "LICENSE",
           "path": "texts/7e64acffcb0d20d33f5a86949ffd4a99ae045b10c7332a9c3a58635876c16880.txt",
           "sha256": "7e64acffcb0d20d33f5a86949ffd4a99ae045b10c7332a9c3a58635876c16880"
-        }
-      ]
-    },
-    {
-      "id": "npm-75ffdfefb00d4521",
-      "name": "picomatch",
-      "version": "4.0.4",
-      "license": "MIT",
-      "source": "https://www.npmjs.com/package/picomatch/v/4.0.4",
-      "scope": "server",
-      "dependencyPath": "node_modules/picomatch",
-      "integrity": "sha512-QP88BAKvMam/3NxH6vj2o21R6MjxZUAd6nlwAS/pnGvN9IVLocLHxGYIzFhg6fUQ+5th6P4dv4eW9jX3DSIj7A==",
-      "sourceArchive": "https://registry.npmjs.org/picomatch/-/picomatch-4.0.4.tgz",
-      "notices": [
-        {
-          "name": "LICENSE",
-          "path": "texts/d0cd141b0c322fded5dfad1d4645bb2fedfc05b7321fe1009469638190d59ef9.txt",
-          "sha256": "d0cd141b0c322fded5dfad1d4645bb2fedfc05b7321fe1009469638190d59ef9"
         }
       ]
     },
@@ -17118,24 +17121,6 @@
           "name": "LICENSE",
           "path": "texts/3fe8d55a98dbf260eace67c00cf9bc53edb46234e840098a0b93df3096b97fb6.txt",
           "sha256": "3fe8d55a98dbf260eace67c00cf9bc53edb46234e840098a0b93df3096b97fb6"
-        }
-      ]
-    },
-    {
-      "id": "npm-e2eef8d8e7761c0b",
-      "name": "tinyglobby",
-      "version": "0.2.17",
-      "license": "MIT",
-      "source": "https://github.com/SuperchupuDev/tinyglobby",
-      "scope": "server",
-      "dependencyPath": "node_modules/tinyglobby",
-      "integrity": "sha512-wXR/dYpcqKmfWpEdZjiKJOwCNFndD0DMnrW/cYjVGttEkBfVgcLFHoNrlj47mjOVic9yyNu65alsgF4NQyTa2g==",
-      "sourceArchive": "https://registry.npmjs.org/tinyglobby/-/tinyglobby-0.2.17.tgz",
-      "notices": [
-        {
-          "name": "LICENSE",
-          "path": "texts/22c68811e174cbbfb3813d4135918df4f540959c14d872e601d9abe83d3cde8f.txt",
-          "sha256": "22c68811e174cbbfb3813d4135918df4f540959c14d872e601d9abe83d3cde8f"
         }
       ]
     },

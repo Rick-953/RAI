@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "reviewedAt": "2026-10-30",
   "reviewBy": "2026-11-30",
-  "scope": "Review all 17 old RustSec exceptions; remove absent packages and retain only existing advisory IDs. RAI Tauri desktop graph, not the CX RAI UWP client or Web Node runtime.",
+  "scope": "Review RAI Tauri desktop lockfile exceptions, not the CX RAI UWP client, Local Agent, or Web Node runtime. The 2026-11-18 addition applies only to a disabled optional dependency.",
   "frameworkVersion": "2.12.1",
   "reviewedLockSha256": "7090215edde90731cb151a863d7bc1c0744f83b657adc7920deb0d988afbd2dc",
   "upstreamChecked": {
@@ -11,6 +11,25 @@
     "evidence": "Published upstream build log still compiles gtk 0.18.2, glib 0.18.5 and GTK3/WebKitGTK; upgrading Tauri alone does not remove the affected GTK3 API line."
   },
   "entries": [
+    {
+      "id": "RUSTSEC-2026-0543",
+      "package": "chrono",
+      "version": "0.4.45",
+      "kind": "unmaintained",
+      "summary": "chrono is unmaintained",
+      "reviewedAt": "2026-11-18",
+      "fixedVersions": [],
+      "dependencyPath": [
+        "rai_desktop@0.11.43",
+        "tauri@2.12.1",
+        "tauri-utils@2.10.1",
+        "serde_with@3.21.0",
+        "chrono@0.4.45"
+      ],
+      "ignoreUntil": "2026-11-30",
+      "reason": "The chrono feature of serde_with is not enabled by any Tauri target with all workspace features enabled. CI verifies the resolved graph. The direct Local Agent dependency is removed, not excepted.",
+      "reference": "https://osv.dev/vulnerability/RUSTSEC-2026-0543"
+    },
     {
       "id": "RUSTSEC-2024-0429",
       "package": "glib",

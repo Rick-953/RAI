@@ -186,7 +186,7 @@ pub fn add_grant(config: &mut AgentConfig, root: &Path) -> Result<()> {
     config.grants.push(Grant {
         root: resolved,
         actions: vec!["read".into(), "write".into(), "execute".into()],
-        created_at: chrono::Utc::now().timestamp(),
+        created_at: crate::unix_timestamp(),
     });
     config.save()
 }
