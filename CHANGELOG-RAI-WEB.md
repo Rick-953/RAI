@@ -5,6 +5,7 @@
 - Keep a complete offline chat shell across upgrades and standalone-page visits. Fix repeated pin requests and the disabled unpin button after a failed removal and panel redraw.
 - Close oversized image-provider responses before returning an error. Image prices and refund rules are unchanged.
 - Offer download only for one-time generated files. Rendering an image attachment or opening a preview never consumes a one-time download.
+- Queue conversation creation on the existing SQLite writer, so a brief competing write does not fail a new chat or duplicate it.
 
 ## 0.13.53 - adaptive interactions
 
