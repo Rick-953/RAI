@@ -1,3 +1,12 @@
+## 0.13.54 - 2026-11-19
+
+- Isolate private browser caches by API deployment and account. Rebuild the signed-in user's older, unscoped cache from the server; signing out closes private file previews and discards late preview and sync responses.
+- Only attach credentials to supported private file routes. Preserve Beta media paths, keep downloaded images usable when browser storage is unavailable, and update cache recency on actual reads.
+- Keep a complete offline chat shell across upgrades and standalone-page visits. Fix repeated pin requests and the disabled unpin button after a failed removal and panel redraw.
+- Close oversized image-provider responses before returning an error. Image prices and refund rules are unchanged.
+- Offer download only for one-time generated files. Rendering an image attachment or opening a preview never consumes a one-time download.
+- Queue conversation creation on the existing SQLite writer, so a brief competing write does not fail a new chat or duplicate it.
+
 ## 0.13.53 - adaptive interactions
 
 - Add 14 task-driven controls and stable-ID workspace updates. On desktop the right panel opens only as needed, and both sidebar widths are device-local. On phones controls stay inline.

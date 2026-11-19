@@ -1,4 +1,4 @@
-const RAI_SW_VERSION = '0.13.53-20261113-adaptive-interactions';
+const RAI_SW_VERSION = '0.13.54-20261119-web-cache-audit';
 const RAI_SCOPE_PATH = new URL(self.registration.scope).pathname.replace(/\/+$/, '') || '';
 const RAI_SCOPE_KEY = RAI_SCOPE_PATH ? RAI_SCOPE_PATH.slice(1).replace(/[^a-z0-9]+/gi, '-') : 'root';
 const RAI_STATIC_CACHE_PREFIX = `rai-static-${RAI_SCOPE_KEY}-`;
@@ -13,28 +13,29 @@ const RAI_AVATAR_CACHE_NAME = `${RAI_AVATAR_CACHE_PREFIX}${RAI_SW_VERSION}`;
 const RAI_NAVIGATION_FALLBACK = appPath('index.html');
 const RAI_AVATAR_CACHE_MAX_ENTRIES = 80;
 const RAI_STATIC_ASSETS = [
-  'interactive-visual-schema.js?v=20261113-adaptive-interactions', 'interactive-controls.js?v=20261113-adaptive-interactions',
-  'interactive-visuals.js?v=20261113-adaptive-interactions', 'interactive-visuals.css?v=20261113-adaptive-interactions',
-  'message-details.js?v=20261113-adaptive-interactions', 'message-details.css?v=20261113-adaptive-interactions',
-  'decision-workbench.js?v=20261113-adaptive-interactions', 'decision-workbench.css?v=20261113-adaptive-interactions',
-  'locale.js?v=20261113-adaptive-interactions',
-  'web-skills.js?v=20261113-adaptive-interactions', 'web-skills.css?v=20261113-adaptive-interactions',
-  'third-party-notices.js?v=20261113-adaptive-interactions', 'third-party-notices.css?v=20261113-adaptive-interactions',
+  'interactive-visual-schema.js?v=20261119-web-cache-audit', 'interactive-controls.js?v=20261119-web-cache-audit',
+  'interactive-visuals.js?v=20261119-web-cache-audit', 'interactive-visuals.css?v=20261119-web-cache-audit',
+  'message-details.js?v=20261119-web-cache-audit', 'message-details.css?v=20261119-web-cache-audit',
+  'decision-workbench.js?v=20261119-web-cache-audit', 'decision-workbench.css?v=20261119-web-cache-audit',
+  'locale.js?v=20261119-web-cache-audit',
+  'web-skills.js?v=20261119-web-cache-audit', 'web-skills.css?v=20261119-web-cache-audit',
+  'third-party-notices.js?v=20261119-web-cache-audit', 'third-party-notices.css?v=20261119-web-cache-audit',
   'third-party-notices.html', 'third-party-notices.js', 'third-party-notices.css', 'locale.js', 'licenses/manifest.json',
-  '', 'index.html', 'runtime-brand.js?v=20261113-adaptive-interactions',
-  'rai-system-prompt.js?v=20261113-adaptive-interactions', 'event-bindings.js?v=20261113-adaptive-interactions',
-  'lib/jsQR.js?v=20261113-adaptive-interactions', 'qr-scanner.js?v=20261113-adaptive-interactions',
-  'secure-sharing.js?v=20261113-adaptive-interactions', 'secure-sharing.css?v=20261113-adaptive-interactions',
-  'diagnostics.js?v=20261113-adaptive-interactions',
-  'user-activity.js?v=20261113-adaptive-interactions',
-  'token-billing.js?v=20261113-adaptive-interactions',
-  'app.js?v=20261113-adaptive-interactions', 'styles.css?v=20261113-adaptive-interactions',
-  'markdown-tables.js?v=20261113-adaptive-interactions',
-  'cx-remote.js?v=20261113-adaptive-interactions', 'local-agent.css?v=20261113-adaptive-interactions',
-  'crf-ui.js?v=20261113-adaptive-interactions',
-  'selection-explainer.js?v=20261113-adaptive-interactions', 'selection-explainer.css?v=20261113-adaptive-interactions',
-  'site.webmanifest?v=20261113-adaptive-interactions', 'icons/source-search.svg', 'icons/rai-app-icon.svg',
-  'pet-quotes.js?v=20261113-adaptive-interactions',
+  '', 'index.html', 'runtime-brand.js?v=20261119-web-cache-audit',
+  'rai-system-prompt.js?v=20261119-web-cache-audit', 'event-bindings.js?v=20261119-web-cache-audit',
+  'conversation-cache.js?v=20261119-web-cache-audit',
+  'lib/jsQR.js?v=20261119-web-cache-audit', 'qr-scanner.js?v=20261119-web-cache-audit',
+  'secure-sharing.js?v=20261119-web-cache-audit', 'secure-sharing.css?v=20261119-web-cache-audit',
+  'diagnostics.js?v=20261119-web-cache-audit',
+  'user-activity.js?v=20261119-web-cache-audit',
+  'token-billing.js?v=20261119-web-cache-audit',
+  'app.js?v=20261119-web-cache-audit', 'styles.css?v=20261119-web-cache-audit',
+  'markdown-tables.js?v=20261119-web-cache-audit',
+  'cx-remote.js?v=20261119-web-cache-audit', 'local-agent.css?v=20261119-web-cache-audit',
+  'crf-ui.js?v=20261119-web-cache-audit',
+  'selection-explainer.js?v=20261119-web-cache-audit', 'selection-explainer.css?v=20261119-web-cache-audit',
+  'site.webmanifest?v=20261119-web-cache-audit', 'icons/source-search.svg', 'icons/rai-app-icon.svg',
+  'pet-quotes.js?v=20261119-web-cache-audit',
   'images/pets/MasterTea1.webp', 'images/pets/MasterTea1-1.webp',
   'images/pets/MasterTea2.webp', 'images/pets/MasterTea2-1.webp',
   'images/pets/MasterTea3.webp', 'images/pets/MasterTea3-1.webp',
@@ -44,19 +45,19 @@ const RAI_STATIC_ASSETS = [
   'images/pets/MasterTeaDesktop.webp', 'images/pets/MasterTeaDesktop-1.webp',
   'icons/rai-app-icon-192.png', 'icons/rai-app-icon-512.png', 'images/onboarding-saturn.png',
   'icons/settings/notifications.svg', 'icons/settings/notifications_paused.svg', 'icons/settings/security.svg',
-  'lib/marked.min.js?v=20261113-adaptive-interactions', 'lib/purify.min.js?v=20261113-adaptive-interactions',
-  'lib/katex/katex.min.css?v=20261113-adaptive-interactions', 'lib/katex/katex.min.js?v=20261113-adaptive-interactions',
-  'lib/katex/contrib/auto-render.min.js?v=20261113-adaptive-interactions',
-  'lib/highlight/styles/github-dark.min.css?v=20261113-adaptive-interactions',
-  'lib/highlight/highlight.min.js?v=20261113-adaptive-interactions'
+  'lib/marked.min.js?v=20261119-web-cache-audit', 'lib/purify.min.js?v=20261119-web-cache-audit',
+  'lib/katex/katex.min.css?v=20261119-web-cache-audit', 'lib/katex/katex.min.js?v=20261119-web-cache-audit',
+  'lib/katex/contrib/auto-render.min.js?v=20261119-web-cache-audit',
+  'lib/highlight/styles/github-dark.min.css?v=20261119-web-cache-audit',
+  'lib/highlight/highlight.min.js?v=20261119-web-cache-audit'
 ].map(appPath);
 
 function isAvatarRequest(url) {
-  return url.pathname.startsWith('/avatars/') && /\.(?:png|jpe?g|webp|gif)$/i.test(url.pathname);
+  return url.pathname.startsWith(appPath('avatars/')) && /\.(?:png|jpe?g|webp|gif)$/i.test(url.pathname);
 }
 
 function isFontRequest(url) {
-  return url.pathname.startsWith('/fonts/') && /\.(?:ttf|otf|woff2?|eot)$/i.test(url.pathname);
+  return url.pathname.startsWith(appPath('fonts/')) && /\.(?:ttf|otf|woff2?|eot)$/i.test(url.pathname);
 }
 
 async function trimCache(cacheName, maxEntries) {
@@ -97,11 +98,10 @@ async function getCachedFontResponse(request) {
 }
 
 self.addEventListener('install', (event) => {
-  self.skipWaiting();
   event.waitUntil(
     caches.open(RAI_CACHE_NAME)
       .then((cache) => cache.addAll(RAI_STATIC_ASSETS))
-      .catch(() => null)
+      .then(() => self.skipWaiting())
   );
 });
 
@@ -126,12 +126,12 @@ self.addEventListener('fetch', (event) => {
   if (url.origin !== self.location.origin) return;
 
   if (isAvatarRequest(url)) {
-    event.respondWith(getCachedAvatarResponse(request).catch(() => caches.match(request)));
+    event.respondWith(getCachedAvatarResponse(request));
     return;
   }
 
   if (isFontRequest(url)) {
-    event.respondWith(getCachedFontResponse(request).catch(() => caches.match(request)));
+    event.respondWith(getCachedFontResponse(request));
     return;
   }
 
@@ -144,29 +144,23 @@ self.addEventListener('fetch', (event) => {
   if (url.pathname === appPath('share.html') || url.pathname === appPath('qr-login.html')) return;
   // A standalone legal document must not replace the offline chat shell.
   if (url.pathname === appPath('third-party-notices.html')) {
-    event.respondWith(fetch(request).catch(() => caches.match(request)));
+    event.respondWith(fetch(request).catch(() => caches.match(request, { cacheName: RAI_CACHE_NAME })));
     return;
   }
 
-  if (request.mode === 'navigate') {
-    event.respondWith(
-      fetch(request)
-        .then((response) => {
-          const copy = response.clone();
-          caches.open(RAI_CACHE_NAME).then((cache) => cache.put(RAI_NAVIGATION_FALLBACK, copy)).catch(() => null);
-          return response;
-        })
-        .catch(() => caches.match(RAI_NAVIGATION_FALLBACK))
-    );
+  if (url.pathname === appPath('') || url.pathname === RAI_NAVIGATION_FALLBACK) {
+    if (request.mode === 'navigate') event.respondWith(fetch(request).catch(() => caches.match(RAI_NAVIGATION_FALLBACK, { cacheName: RAI_CACHE_NAME })));
     return;
   }
+  if (request.mode === 'navigate' || (!RAI_STATIC_ASSETS.includes(url.pathname + url.search) &&
+      !['icons/', 'images/', 'licenses/', 'lib/katex/fonts/'].some(prefix => url.pathname.startsWith(appPath(prefix))))) return;
 
   event.respondWith(
-    caches.match(request)
+    caches.match(request, { cacheName: RAI_CACHE_NAME })
       .then((cached) => cached || fetch(request).then((response) => {
-        if (!response || response.status !== 200) return response;
+        if (response.status !== 200 || response.redirected || /\b(?:no-store|private)\b/i.test(response.headers.get('Cache-Control') || '')) return response;
         const copy = response.clone();
-        caches.open(RAI_CACHE_NAME).then((cache) => cache.put(request, copy)).catch(() => null);
+        event.waitUntil(caches.open(RAI_CACHE_NAME).then((cache) => cache.put(request, copy)).catch(() => null));
         return response;
       }))
   );

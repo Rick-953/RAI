@@ -26,6 +26,16 @@ function productionFunction(name) {
 }
 
 async function main() {
+    const readImage = vm.runInNewContext(`(${productionFunction('readBoundedImageProviderResponse')})`, { Buffer });
+    for (const declared of [true, false]) {
+        let cancelled = false;
+        const response = new Response(new ReadableStream({
+            pull(controller) { controller.enqueue(new Uint8Array(1025)); },
+            cancel() { cancelled = true; }
+        }), { headers: declared ? { 'Content-Length': '1025' } : {} });
+        await assert.rejects(readImage(response, 1024), /image_provider_response_too_large/);
+        assert.equal(cancelled, true, 'an oversized image response must release its upstream stream');
+    }
     assert.deepEqual(Object.values(policy.IMAGE_MODEL_COSTS), [100, 200, 300, 100, 200, 300]);
     assert.equal(policy.inferImageGenerationSize('Generate a 2K image'), '2048x2048');
     assert.equal(policy.inferImageGenerationSize('生成2K横版图片'), '2048x1152');

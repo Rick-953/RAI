@@ -2028,7 +2028,10 @@ function linkImageProviderAbort(controller, externalSignal) {
 async function readBoundedImageProviderResponse(response, maxBytes, { parseJson = false } = {}) {
     const safeMaxBytes = Math.max(1024, Number(maxBytes) || 1024);
     const declaredLength = Number(response?.headers?.get?.('content-length') || 0);
-    if (declaredLength > safeMaxBytes) throw new Error('image_provider_response_too_large');
+    if (declaredLength > safeMaxBytes) {
+        await response.body?.cancel().catch(() => null);
+        throw new Error('image_provider_response_too_large');
+    }
     if (!response?.body?.getReader) {
         throw new Error('image_provider_response_body_unavailable');
     }
@@ -16233,22 +16236,16 @@ app.post('/api/sessions', authenticateToken, async (req, res) => {
         const safeTitle = sanitizeGeneratedConversationTitle(requestedTitle)
             || (requestedTitle && GENERIC_SESSION_TITLE_RE.test(requestedTitle) ? requestedTitle : fallbackTitle);
 
-        db.run(
+        await enqueueMainDbTransaction(() => transactionDbRunAsync(
             'INSERT INTO sessions (id, user_id, title, model, prompt_model_identity, session_kind) VALUES (?, ?, ?, ?, ?, ?)',
-            [sessionId, req.user.userId, safeTitle, model || 'auto', normalizeSessionPromptModelIdentity(promptModelIdentity), sessionKind || 'chat'],
-            (err) => {
-                if (err) {
-                    console.error(' 创建会话失败:', sanitizeReportContext(err));
-                    return res.status(500).json({ error: '创建失败' });
-                }
-                console.log(' 创建会话成功:', sessionId);
-                scheduleConversationIntegritySeal(sessionId, req.user.userId);
-                res.json({ success: true, sessionId, prompt_model_identity: normalizeSessionPromptModelIdentity(promptModelIdentity) });
-            }
-        );
+            [sessionId, req.user.userId, safeTitle, model || 'auto', normalizeSessionPromptModelIdentity(promptModelIdentity), sessionKind || 'chat']
+        ));
+        scheduleConversationIntegritySeal(sessionId, req.user.userId);
+        res.json({ success: true, sessionId, prompt_model_identity: normalizeSessionPromptModelIdentity(promptModelIdentity) });
     } catch (error) {
-        console.error(' 确保sessions表结构失败:', sanitizeReportContext(error));
-        res.status(500).json({ error: '数据库结构初始化失败' });
+        console.error(' 创建会话失败:', sanitizeReportContext(error));
+        if (error?.code === 'SQLITE_BUSY') return res.status(503).json({ error: '数据库正忙，请稍后重试', code: 'database_busy' });
+        res.status(500).json({ error: '创建失败' });
     }
 });
 

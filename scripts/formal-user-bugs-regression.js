@@ -945,7 +945,7 @@ async function testMessageRenderingStability() {
     'session-list loading must capture the account context before network I/O');
   assert.match(loadSessions, /isConversationCacheContextCurrent\(context\)[\s\S]{0,240}return false/,
     'a delayed session-list response must be discarded after an account switch');
-  assert.match(conversationCache, /storeKey === `manifest:\$\{key\}`/,
+  assert.match(conversationCache, /objectStore\('meta'\)\.delete\(`manifest:\$\{key\}`\)/,
     'manifest cleanup must compare the exact account key');
   assert.doesNotMatch(conversationCache, /String\(storeKey\)\.includes\(key\)/,
     'account cache cleanup must not delete another account with a shared numeric suffix');
@@ -1057,6 +1057,25 @@ async function testMessageRenderingStability() {
     'a response that crosses an account/token/cache epoch boundary must not patch the active DOM');
   assert.equal(patchCalls, 3);
   assert.equal(refreshState.sessionRefreshes.size, 0);
+
+  const deletedIds = [];
+  let revisionsRead = false;
+  const syncAfterSwitch = new Function('appState', 'window', 'fetch', 'API_BASE', 'canRunConversationSync',
+    `${extractNamedFunction(app, 'captureConversationCacheContext')}
+     ${extractNamedFunction(app, 'isConversationCacheContextCurrent')}
+     ${syncConversations.replace(/^function/, 'async function')}; return syncConversationsAcrossDevices;`
+  )(refreshState, { RAIConversationCache: {
+    getManifest: async () => ({ etag: 'same', manifest: { sessions: [] } }),
+    cachedConversationRevisions: async () => {
+      revisionsRead = true;
+      refreshState.conversationCacheEpoch++;
+      return [{ sessionId: 'old-session', revision: 1 }];
+    },
+    deleteConversation: id => deletedIds.push(id)
+  } }, async () => ({ status: 304 }), '/api', () => true);
+  await syncAfterSwitch({ force: true });
+  assert.ok(revisionsRead);
+  assert.deepEqual(deletedIds, [], 'a poll from a previous login cannot prune the current cache');
 }
 
 function testVersionContract() {
@@ -1305,7 +1324,7 @@ function testVersionContract() {
     'uploaded images must use a captured session context and render from a Blob URL');
   assert.match(app, /async function hydratePrivateGeneratedImage[\s\S]{0,1800}const context = captureConversationCacheContext\(\)[\s\S]{0,900}Authorization: `Bearer \$\{context\.token\}`[\s\S]{0,900}cache\?\.putAsset\?/,
     'generated images must use a captured session context before persisting a private Blob');
-  assert.match(extractNamedFunction(app, 'createAttachmentListItem'), /const isImage = att\.type === 'image' && \(att\.data \|\| att\.filePath \|\| att\.localThumbnail\)[\s\S]{0,1000}hydratePrivateAttachmentImage\(img, att\)/,
+  assert.match(extractNamedFunction(app, 'createAttachmentListItem'), /const isImage = !downloadOnly && att\.type === 'image' && \(att\.data \|\| att\.filePath \|\| att\.localThumbnail\)[\s\S]{0,1000}hydratePrivateAttachmentImage\(img, att\)/,
     'stored image attachments must use the authenticated image preview path');
   assert.match(server, /const PROVISIONED_TEST_ACCOUNT_EMAIL = '1@1\.com'/);
   assert.match(server, /function isProvisionedTestAccount\(user, normalizedEmail\)[\s\S]*?normalizeEmailForAuth\(normalizedEmail\) === PROVISIONED_TEST_ACCOUNT_EMAIL[\s\S]*?normalizeEmailForAuth\(user\?\.email\) === PROVISIONED_TEST_ACCOUNT_EMAIL/);

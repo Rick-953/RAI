@@ -313,12 +313,27 @@ async function desktopChecks(browser) {
     f.reject('POST', 'pin_content_too_large');
     await page.evaluate(() => fixture.controller.addPin({ id: 99 }));
     assert.ok((await page.evaluate(() => fixture.notices.at(-1))).includes('64 KiB'));
-    assert.equal(await page.evaluate(() => fixture.controller.addPin({ id: 99 })), true);
+    const firstPin = f.hold('POST');
+    await page.evaluate(() => { fixture.firstPin = fixture.controller.addPin({ id: 99 }); });
+    await firstPin.entered.promise;
+    const postCountBeforeRepeats = f.requests.filter(item => item.method === 'POST').length;
+    try {
+      for (let repeat = 0; repeat < 2; repeat++) {
+        assert.equal(await page.evaluate(() => fixture.controller.addPin({ id: 99 })), false);
+      }
+      assert.equal(f.requests.filter(item => item.method === 'POST').length, postCountBeforeRepeats);
+    } finally { firstPin.release.resolve(); }
+    assert.equal(await page.evaluate(() => fixture.firstPin), true);
     assert.equal(await page.locator('.decision-pin-card').count(), 4);
     f.reject('DELETE', 'request_failed');
+    const firstRemoval = f.hold('DELETE');
     await page.locator('.decision-pin-card[data-pin-id="99"] .decision-unpin').click();
-    await page.waitForFunction(() => fixture.notices.at(-1).includes('取消固定失败'));
+    await firstRemoval.entered.promise;
+    await page.evaluate(() => { fixture.context.language = 'en'; return fixture.controller.sync(); });
+    firstRemoval.release.resolve();
+    await page.waitForFunction(() => fixture.notices.at(-1).includes('Could not unpin'));
     assert.equal(await page.locator('.decision-pin-card[data-pin-id="99"] .decision-unpin').isEnabled(), true);
+    await page.evaluate(() => { fixture.context.language = 'zh-CN'; return fixture.controller.sync(); });
     const oldList = f.hold('GET');
     await page.evaluate(() => { fixture.pendingRefresh = fixture.controller.sync({ refresh: true }); });
     await oldList.entered.promise;

@@ -318,7 +318,15 @@ async function main() {
         console.log('PASS real registration, local email verification, password login and persisted auth sessions');
 
         const aliceSession = await createSession(alice, 'Decision English evidence');
-        const aliceChinese = await createSession(alice, 'Decision Chinese evidence');
+        const { DatabaseSync } = require('node:sqlite');
+        const blocker = new DatabaseSync(databasePath);
+        let aliceChinese, releaseLock;
+        try {
+            blocker.exec('PRAGMA busy_timeout=5000; BEGIN IMMEDIATE');
+            releaseLock = setTimeout(() => blocker.exec('ROLLBACK'), 5500);
+            aliceChinese = await createSession(alice, 'Decision Chinese evidence');
+        } finally { clearTimeout(releaseLock); blocker.close(); }
+        assert.equal((await get('SELECT count(*) AS n FROM sessions WHERE user_id = ? AND title = ?', [alice.id, 'Decision Chinese evidence'])).n, 1);
         const bobSession = await createSession(bob, 'Decision ordinary chat');
         await chat(alice, aliceSession, 'en', { interactiveVisuals: true });
         await chat(alice, aliceChinese, 'zh-CN', { interactiveVisuals: true });

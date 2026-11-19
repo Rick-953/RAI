@@ -111,6 +111,8 @@ jobs:
           RAI_BROWSER_ENGINE=webkit npm run test:decision-workbench-browser
           npm run test:decision-workbench-app-browser
           RAI_BROWSER_ENGINE=webkit npm run test:decision-workbench-app-browser
+          npm run test:web-cache-browser
+          RAI_BROWSER_ENGINE=webkit npm run test:web-cache-browser
           npm run test:startup-auth-runtime
           RAI_BROWSER_ENGINE=webkit npm run test:startup-auth-runtime
           npm run test:composer-focus-runtime

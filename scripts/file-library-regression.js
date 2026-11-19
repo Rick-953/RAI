@@ -4,6 +4,7 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
+const { extractNamedFunction } = require('./beta-static-security-contracts');
 
 const root = path.resolve(__dirname, '..');
 const server = fs.readFileSync(path.join(root, 'server.js'), 'utf8').replace(/\r\n/g, '\n');
@@ -50,5 +51,25 @@ assert.match(styles, /\.file-library-entry:focus-visible/);
 assert.match(styles, /prefers-reduced-motion: reduce/);
 assert.match(styles, /padding: calc\(var\(--header-height\) \+ 22px\) 16px calc\(24px \+ env\(safe-area-inset-bottom/);
 assert.match(styles, /@media \(max-width: 768px\)[\s\S]*\.file-library-shell/);
+
+for (const [page, api, root] of [
+    ['https://rai.test/', '/api', 'https://rai.test'],
+    ['https://rai.test/beta/', '/beta/api', 'https://rai.test/beta'],
+    ['http://tauri.localhost/', 'https://rai.test/api', 'https://rai.test']
+]) {
+    const context = vm.createContext({ URL, window: { location: new URL(page) }, API_BASE: api, RAI_IS_TAURI_DESKTOP: page.includes('tauri.localhost') });
+    const functions = ['resolvePrivateMediaUrl', 'resolvePrivateGeneratedImageUrl', 'resolveAttachmentUrl', 'resolveProtectedFileJobUrl'];
+    vm.runInContext(functions.map(name => extractNamedFunction(app, name)).join('\n'), context);
+    const upload = '/api/uploads/1763000000000-abcdef123456.png';
+    const generated = '/generated-images/generated-1763000000000-abcdef123456-1.png';
+    for (const filePath of [upload, root + upload]) {
+        assert.equal(new URL(context.resolveAttachmentUrl({ filePath }), page).href, root + upload);
+    }
+    for (const value of [generated, root + generated]) assert.equal(context.resolvePrivateGeneratedImageUrl(value), root + generated);
+    assert.equal(context.resolveAttachmentUrl({ filePath: 'https://other.test' + upload }), '', 'private attachments must belong to the configured API');
+    assert.equal(context.resolveAttachmentUrl({ filePath: '/api/health' }), '', 'a non-file route is not an attachment');
+    const artifact = `/api/file-jobs/${'1'.repeat(48)}/artifacts/${'2'.repeat(32)}?sessionId=chat`;
+    assert.equal(new URL(context.resolveAttachmentUrl({ filePath: artifact }), page).href, root + artifact);
+}
 
 console.log('file-library-regression ok');

@@ -35,7 +35,6 @@
       let result;
       try { result = callback(tx); } catch (error) { tx.abort(); reject(error); return; }
       tx.oncomplete = () => resolve(result);
-      tx.onerror = () => reject(tx.error);
       tx.onabort = () => reject(tx.error || new Error('IndexedDB transaction aborted'));
     });
   }
@@ -47,8 +46,35 @@
     });
   }
 
-  function accountKey(userId) {
-    return `${window.location.origin}|${String(userId)}`;
+  function accountRange(key) {
+    return IDBKeyRange.bound([key], [key, []]);
+  }
+
+  function clearAccount(key) {
+    return transaction(['meta', 'sessions', 'messages', 'assets'], 'readwrite', (tx) => {
+      tx.objectStore('meta').delete(`manifest:${key}`);
+      tx.objectStore('meta').delete(accountRange(key));
+      for (const name of ['sessions', 'messages', 'assets']) tx.objectStore(name).delete(accountRange(key));
+    });
+  }
+
+  async function readCachedRow(storeName, rowKey, read) {
+    let result = null;
+    await transaction([storeName, 'meta'], 'readwrite', (tx) => {
+      const store = tx.objectStore(storeName);
+      const request = store.get(rowKey);
+      const metaKey = [rowKey[0], storeName, rowKey[1]];
+      const meta = tx.objectStore('meta');
+      const info = meta.get(metaKey);
+      info.onsuccess = () => {
+        if (!request.result && !info.result) return;
+        const previousTime = info.result?.time;
+        result = request.result && info.result ? read(request.result, info.result) : null;
+        if (!result) { store.delete(rowKey); meta.delete(metaKey); }
+        else if (info.result.time !== previousTime) meta.put(info.result);
+      };
+    });
+    return result;
   }
 
   function currentAccount() {
@@ -59,46 +85,47 @@
     try { return new Blob([JSON.stringify(messages || [])]).size; } catch (_) { return 0; }
   }
 
-  async function trim() {
-    const key = currentAccount();
-    if (!key) return;
-    const [assets, conversations] = await Promise.all([
-      transaction(['assets'], 'readonly', (tx) => requestValue(tx.objectStore('assets').getAll())),
-      transaction(['messages'], 'readonly', (tx) => requestValue(tx.objectStore('messages').getAll()))
-    ]);
-    const accountAssets = assets.filter((row) => row.accountId === key);
-    const accountConversations = conversations.filter((row) => row.accountId === key);
-    let total = accountAssets.reduce((sum, row) => sum + Number(row.size || 0), 0)
-      + accountConversations.reduce((sum, row) => sum + Number(row.size || 0), 0);
-    if (total <= MAX_BYTES) return;
-    await transaction(['assets', 'messages'], 'readwrite', (tx) => {
-      const assetStore = tx.objectStore('assets');
-      const messageStore = tx.objectStore('messages');
-      for (const row of accountAssets.sort((a, b) => Number(a.lastUsedAt || 0) - Number(b.lastUsedAt || 0))) {
-        if (total <= MAX_BYTES) break;
-        assetStore.delete([key, row.url]);
-        total -= Number(row.size || 0);
-      }
-      for (const row of accountConversations.sort((a, b) => Number(a.lastOpenedAt || 0) - Number(b.lastOpenedAt || 0))) {
-        if (total <= MAX_BYTES) break;
-        messageStore.delete([key, row.sessionId]);
-        total -= Number(row.size || 0);
-      }
+  function putCachedRow(storeName, id, row, time) {
+    return transaction(['assets', 'messages', 'meta'], 'readwrite', tx => {
+      const meta = tx.objectStore('meta');
+      tx.objectStore(storeName).put(row);
+      meta.put({ key: [row.accountId, storeName, id], size: row.size, time, revision: row.revision, formatVersion: row.formatVersion });
+      const request = meta.getAll(accountRange(row.accountId));
+      request.onsuccess = () => {
+        const entries = request.result;
+        let total = entries.reduce((sum, entry) => sum + entry.size, 0);
+        if (total <= MAX_BYTES) return;
+        entries.sort((left, right) => (left.key[1] === 'messages') - (right.key[1] === 'messages') || left.time - right.time);
+        for (const entry of entries) {
+          if (total <= MAX_BYTES) break;
+          const [account, store, item] = entry.key;
+          tx.objectStore(store).delete([account, item]);
+          meta.delete(entry.key);
+          total -= entry.size;
+        }
+      };
     });
   }
 
-  async function getAllForAccount(storeName) {
+  function deleteCachedRow(storeName, account, id) {
+    return transaction([storeName, 'meta'], 'readwrite', tx => {
+      tx.objectStore(storeName).delete([account, id]);
+      tx.objectStore('meta').delete([account, storeName, id]);
+    });
+  }
+
+  async function cacheEntries(storeName) {
     const key = currentAccount();
     if (!key) return [];
-    const all = await transaction([storeName], 'readonly', (tx) => requestValue(tx.objectStore(storeName).getAll()));
-    return all.filter((row) => row.accountId === key);
+    const range = storeName ? IDBKeyRange.bound([key, storeName], [key, storeName, []]) : accountRange(key);
+    return transaction(['meta'], 'readonly', tx => requestValue(tx.objectStore('meta').getAll(range)));
   }
 
   const api = {
     async openForUser(userId) {
-      accountId = accountKey(userId);
+      accountId = `${new URL(window.RAI_API_BASE, window.location.href).href}|${String(userId)}`;
       try { enabled = localStorage.getItem('rai_conversation_cache_enabled') !== '0'; } catch (_) { enabled = true; }
-      if (enabled) await openDb();
+      if (enabled) await clearAccount(`${window.location.origin}|${String(userId)}`);
       return enabled;
     },
     isEnabled() { return enabled; },
@@ -123,22 +150,13 @@
     async getConversation(sessionId, options = {}) {
       const key = currentAccount();
       if (!key || !sessionId) return null;
-      const row = await transaction(['messages'], 'readwrite', (tx) => {
-        const store = tx.objectStore('messages');
-        const request = store.get([key, String(sessionId)]);
-        request.onsuccess = () => {
-          const value = request.result;
-          if (value && options.touch !== false) { value.lastOpenedAt = Date.now(); store.put(value); }
-        };
-        return requestValue(request);
+      const rowKey = [key, String(sessionId)];
+      return readCachedRow('messages', rowKey, (row, metadata) => {
+        if (Number(row.formatVersion || 0) !== MESSAGE_FORMAT_VERSION) return null;
+        if (options.touch !== false) metadata.time = Date.now();
+        row.lastOpenedAt = metadata.time;
+        return row;
       });
-      if (row && Number(row.formatVersion || 0) !== MESSAGE_FORMAT_VERSION) {
-        await transaction(['messages'], 'readwrite', (tx) => {
-          tx.objectStore('messages').delete([key, String(sessionId)]);
-        });
-        return null;
-      }
-      return row || null;
     },
     async putConversation(sessionId, messages, revision, etag, options = {}) {
       const key = currentAccount();
@@ -146,79 +164,63 @@
       const lastOpenedAt = options.touch === false
         ? Number(options.lastOpenedAt || 0)
         : Date.now();
-      await transaction(['messages'], 'readwrite', (tx) => tx.objectStore('messages').put({
+      await putCachedRow('messages', String(sessionId), {
         accountId: key, sessionId: String(sessionId), messages, revision: Number(revision || 0), etag: String(etag || ''),
-        formatVersion: MESSAGE_FORMAT_VERSION, size: messageBytes(messages), lastOpenedAt, updatedAt: Date.now()
-      }));
-      await trim();
+        formatVersion: MESSAGE_FORMAT_VERSION, size: messageBytes(messages), updatedAt: Date.now()
+      }, lastOpenedAt);
     },
     async deleteConversation(sessionId) {
       const key = currentAccount();
       if (!key || !sessionId) return;
-      await transaction(['messages'], 'readwrite', (tx) => tx.objectStore('messages').delete([key, String(sessionId)]));
+      await deleteCachedRow('messages', key, String(sessionId));
     },
     async cachedConversationIds() {
-      return (await getAllForAccount('messages')).map((row) => String(row.sessionId));
+      return (await cacheEntries('messages')).map(entry => entry.key[2]);
     },
     async cachedConversationRevisions() {
-      return (await getAllForAccount('messages'))
+      return (await cacheEntries('messages'))
         .filter((row) => Number(row.formatVersion || 0) === MESSAGE_FORMAT_VERSION)
         .map((row) => ({
-          sessionId: String(row.sessionId),
+          sessionId: row.key[2],
           revision: Number(row.revision || 0)
         }));
     },
     async getAsset(url) {
       const key = currentAccount();
       if (!key || !url) return null;
-      const row = await transaction(['assets'], 'readwrite', (tx) => {
-        const store = tx.objectStore('assets');
-        const request = store.get([key, String(url)]);
-        request.onsuccess = () => { if (request.result) { request.result.lastUsedAt = Date.now(); store.put(request.result); } };
-        return requestValue(request);
+      const rowKey = [key, String(url)];
+      return readCachedRow('assets', rowKey, (row, metadata) => {
+        if (row.expiresAt && Number(row.expiresAt) <= Date.now()) return null;
+        row.lastUsedAt = metadata.time = Date.now();
+        return row;
       });
-      if (row?.expiresAt && Number(row.expiresAt) <= Date.now()) {
-        await transaction(['assets'], 'readwrite', (tx) => tx.objectStore('assets').delete([key, String(url)]));
-        return null;
-      }
-      return row || null;
     },
     async putAsset(url, blob, options = {}) {
       const key = currentAccount();
       if (!key || !url || !(blob instanceof Blob) || blob.size > MAX_RESOURCE_BYTES) return false;
       const expiresAt = Number(options.expiresAt || 0);
       if (expiresAt && expiresAt <= Date.now()) return false;
-      await transaction(['assets'], 'readwrite', (tx) => tx.objectStore('assets').put({
-        accountId: key, url: String(url), blob, etag: String(options.etag || ''), expiresAt,
-        size: blob.size, lastUsedAt: Date.now(), updatedAt: Date.now()
-      }));
-      await trim();
+      try {
+        await putCachedRow('assets', String(url), {
+          accountId: key, url: String(url), blob, etag: String(options.etag || ''), expiresAt,
+          size: blob.size, updatedAt: Date.now()
+        }, Date.now());
+      } catch (error) {
+        if (error?.name === 'QuotaExceededError' || error?.name === 'UnknownError') return false;
+        throw error;
+      }
       return true;
     },
     async deleteAsset(url) {
       const key = currentAccount();
       if (!key || !url) return;
-      await transaction(['assets'], 'readwrite', (tx) => tx.objectStore('assets').delete([key, String(url)]));
+      await deleteCachedRow('assets', key, String(url));
     },
     async usage() {
-      const [assets, messages] = await Promise.all([getAllForAccount('assets'), getAllForAccount('messages')]);
-      return assets.reduce((sum, row) => sum + Number(row.size || 0), 0) + messages.reduce((sum, row) => sum + Number(row.size || 0), 0);
+      return (await cacheEntries()).reduce((sum, row) => sum + row.size, 0);
     },
     async clearCurrentAccount() {
-      const key = accountId;
-      if (!key) return;
-      await transaction(['meta', 'sessions', 'messages', 'assets'], 'readwrite', (tx) => {
-        ['meta', 'sessions', 'messages', 'assets'].forEach((name) => {
-          const store = tx.objectStore(name);
-          const request = store.getAllKeys();
-          request.onsuccess = () => request.result.forEach((storeKey) => {
-            const belongsToAccount = name === 'meta'
-              ? storeKey === `manifest:${key}`
-              : Array.isArray(storeKey) && storeKey[0] === key;
-            if (belongsToAccount) store.delete(storeKey);
-          });
-        });
-      });
+      if (accountId) await clearAccount(accountId);
     }
   };
 

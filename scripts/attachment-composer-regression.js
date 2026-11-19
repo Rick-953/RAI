@@ -144,6 +144,57 @@ async function browserCases() {
             releaseUpload(); uploadGate = null;
             assert.equal(await page.evaluate(() => window.fixtureUpload), 0, 'cleared draft must reject a late upload');
             assert.equal(await page.evaluate(() => currentAttachments.length), 0);
+            const textPreview = { contentType: 'application/json', body: JSON.stringify({ kind: 'text', content: 'Saved note' }) };
+            const artifact = `/api/file-jobs/${'1'.repeat(48)}/artifacts/${'2'.repeat(32)}?sessionId=chat`;
+            let downloads = 0;
+            await page.route('**/api/file-jobs/**', route => {
+                downloads++;
+                return route.fulfill({ contentType: 'application/octet-stream', body: 'generated' });
+            });
+            const controls = await page.evaluate(async filePath => {
+                appState.confirmedCacheUserId = String(appState.user.id);
+                const counts = [];
+                for (const type of ['document', 'image']) {
+                    const card = createAttachmentListItem({ type, filePath, fileName: 'one-time.txt' });
+                    document.body.appendChild(card);
+                    counts.push(card.querySelectorAll('img,.attachment-preview-btn').length, card.querySelectorAll('.attachment-download-btn').length);
+                    card.id = 'one-time-' + type;
+                }
+                return [...counts, await previewAttachment({ filePath }), !!createAttachmentListItem({ filePath: '/api/uploads/open.txt' }).querySelector('.attachment-preview-btn')];
+            }, artifact);
+            assert.deepEqual(controls, [0, 1, 0, 1, false, true]);
+            assert.equal(downloads, 0);
+            const completedDownload = page.waitForEvent('download');
+            await page.locator('#one-time-document .attachment-download-btn').evaluate(button => button.click());
+            assert.equal((await completedDownload).suggestedFilename(), 'one-time.txt');
+            assert.equal(downloads, 1);
+            await page.route('**/api/uploads/open.txt/preview', route => route.fulfill(textPreview));
+            assert.equal(await page.evaluate(() => previewAttachment({ filePath: '/api/uploads/open.txt' })), true);
+            assert.equal(await page.locator('#privateFilePreview pre').textContent(), 'Saved note');
+            const heldPreview = Promise.withResolvers();
+            await page.route('**/api/uploads/late.txt/preview', async route => {
+                await heldPreview.promise;
+                await route.fulfill(textPreview);
+            });
+            const started = page.waitForRequest('**/api/uploads/late.txt/preview');
+            await page.evaluate(() => { window.pendingPreview = previewAttachment({ filePath: '/api/uploads/late.txt' }); });
+            await started;
+            await page.route('**/api/file-jobs/**', async route => { await heldPreview.promise; await route.fulfill({ body: 'old download' }); });
+            await page.route('**/api/files/old-file', async route => { await heldPreview.promise; await route.fulfill({ json: { success: true, storage: { usedBytes: 100 } } }); });
+            const operations = Promise.all([page.waitForRequest('**/api/file-jobs/**'), page.waitForRequest('**/api/files/old-file')]);
+            await page.evaluate(filePath => {
+                window.confirm = () => true;
+                window.pendingFileActions = Promise.all([downloadFileJobArtifact(filePath), deleteFileLibraryItem({ id: 'old-file' })]);
+            }, artifact);
+            await operations;
+            await page.evaluate(() => clearUserAccessToken());
+            const openAfterLogout = await page.locator('#privateFilePreview').count();
+            heldPreview.resolve();
+            const reopened = await page.evaluate(() => window.pendingPreview);
+            assert.equal(openAfterLogout, 0, 'logout closes an existing private preview');
+            assert.equal(reopened, false, 'a response from the previous login cannot reopen a preview');
+            assert.deepEqual(await page.evaluate(() => window.pendingFileActions), [false, false], 'late file actions must not download or update the new account');
+            assert.equal(await page.locator('#privateFilePreview').count(), 0);
             await page.close();
         }
         console.log(`attachment-composer: ${engine.name()} desktop/mobile real paste, UTF-8 upload, mixed nine-file queue, overflow, failure and clear race passed`);
