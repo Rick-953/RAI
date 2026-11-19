@@ -1,6 +1,6 @@
 {
   "name": "rai",
-  "version": "0.13.53",
+  "version": "0.13.54",
   "packageManager": "npm@11.13.0",
   "engines": {
     "node": "24.16.0",
@@ -121,6 +121,7 @@
     "test:decision-workbench": "node scripts/decision-workbench-api-regression.js && node scripts/interactive-visuals-regression.js && node scripts/tool-finalization-regression.js && node scripts/parallel-agent-no-replay-regression.js",
     "test:decision-workbench-integration": "node scripts/decision-workbench-integration-regression.js",
     "test:decision-workbench-app-browser": "node scripts/decision-workbench-app-regression.js",
+    "test:web-cache-browser": "node scripts/web-cache-browser-regression.js",
     "test:decision-workbench-browser": "node scripts/decision-workbench-ui-regression.js && node scripts/interactive-controls-browser-regression.js && node scripts/tool-finalization-regression.js --browser",
     "test:message-details-browser": "node scripts/message-details-gesture-regression.js",
     "test:crf-parser": "node scripts/crf-parser-regression.js",

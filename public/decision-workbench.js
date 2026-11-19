@@ -530,9 +530,9 @@
       if (context?.temporary) { notify(t('temporary')); return false; }
       if (!canSave()) { notify(t('unsaved')); return false; }
       const epoch = generation;
-      let sourceId;
+      let pendingId;
       try {
-        sourceId = await resolveMessageId(message);
+        const sourceId = await resolveMessageId(message);
         if (!current(epoch)) return false;
         if (!Number.isSafeInteger(sourceId) || sourceId <= 0) {
           notify(t('resolveFailed'));
@@ -543,6 +543,7 @@
           return false;
         }
         adding.add(sourceId);
+        pendingId = sourceId;
         const result = await request(basePath(), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -569,7 +570,7 @@
         if (current(epoch)) notify(t(errors[code] || 'addFailed'));
         return false;
       } finally {
-        if (current(epoch)) adding.delete(sourceId);
+        if (pendingId !== undefined && current(epoch)) adding.delete(pendingId);
       }
     }
 
@@ -603,8 +604,11 @@
       } finally {
         if (current(epoch)) {
           removing.delete(pin.id);
-          control.disabled = false;
-          control.textContent = t('remove');
+          const liveControl = cards.get(String(pin.id))?.node.querySelector('.decision-unpin');
+          if (liveControl) {
+            liveControl.disabled = false;
+            liveControl.textContent = t('remove');
+          }
         }
       }
     }

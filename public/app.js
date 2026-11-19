@@ -371,20 +371,26 @@ function sanitizeAssistantDisplayText(text = '') {
   return output.replace(/\n{3,}/g, '\n\n').trimEnd();
 }
 
-function resolvePrivateGeneratedImageUrl(value) {
+function resolvePrivateMediaUrl(value, prefix) {
   const raw = String(value || '').trim();
-  if (!raw || raw.startsWith('blob:') || raw.startsWith('data:')) return '';
-
+  if (!raw) return '';
   try {
-    const apiOrigin = new URL(API_BASE, window.location.origin).origin;
-    const baseOrigin = RAI_IS_TAURI_DESKTOP ? apiOrigin : window.location.origin;
-    const url = new URL(raw, baseOrigin);
-    if (url.origin !== apiOrigin || !url.pathname.startsWith('/generated-images/')) return '';
-    if (url.username || url.password) return '';
-    return url.href;
+    const api = new URL(API_BASE, window.location.href);
+    const url = new URL(raw, api.origin);
+    if (url.origin !== api.origin || url.username || url.password) return '';
+    const scoped = api.pathname.replace(/\/api\/?$/, '') + prefix;
+    const base = url.pathname.startsWith(scoped) ? scoped : prefix;
+    if (!url.pathname.startsWith(base)) return '';
+    const filename = decodeURIComponent(url.pathname.slice(base.length));
+    if (!filename || /[/\\\u0000]/.test(filename) || filename.includes('..')) return '';
+    return api.origin + scoped + encodeURIComponent(filename);
   } catch (error) {
     return '';
   }
+}
+
+function resolvePrivateGeneratedImageUrl(value) {
+  return resolvePrivateMediaUrl(value, '/generated-images/');
 }
 
 function renderMarkdownWithMath(text, isStreaming = false) {
@@ -623,6 +629,7 @@ async function fetchPrivateGeneratedImageBlob(sourceUrl) {
     etag: response.headers.get('ETag'),
     expiresAt: Number(response.headers.get('X-RAI-Asset-Expires-At') || 0)
   });
+  if (!isConversationCacheContextCurrent(context)) throw new Error('generated image context changed');
   return { blob, url: generatedUrl };
 }
 
@@ -2415,8 +2422,8 @@ function getRaiWebBasePath() {
 const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
-const RAI_APP_VERSION = '0.13.53';
-const RAI_BUILD_ID = '20261113-adaptive-interactions';
+const RAI_APP_VERSION = '0.13.54';
+const RAI_BUILD_ID = '20261119-web-cache-audit';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -7876,12 +7883,7 @@ async function parseApiJsonResponse(response) {
 }
 
 function resolveAttachmentUrl(att = {}) {
-  const filePath = String(att.filePath || '').trim();
-  if (!filePath) return '';
-  const apiRoot = String(API_BASE || '').replace(/\/api\/?$/, '');
-  return /^https?:\/\//i.test(filePath)
-    ? filePath
-    : `${apiRoot}${filePath.startsWith('/') ? filePath : `/${filePath}`}`;
+  return resolvePrivateMediaUrl(att.filePath, '/api/uploads/') || resolveProtectedFileJobUrl(att.filePath);
 }
 
 async function hydratePrivateAttachmentImage(img, att = {}) {
@@ -7996,11 +7998,14 @@ function showPrivateFilePreview({ title = '', contentNode = null, objectUrl = ''
 }
 
 async function previewAttachment(att = {}) {
+  if (resolveProtectedFileJobUrl(att.filePath)) return false;
+  const context = captureUserAuthContext();
   const type = String(att.type || '').toLowerCase();
   const title = att.fileName || att.originalName || (isChineseLanguage(appState.language) ? '附件' : 'Attachment');
   try {
     if (['image', 'audio', 'video'].includes(type)) {
       const blob = await fetchPrivateAttachmentBlob(att);
+      if (!isUserAuthContextCurrent(context)) return false;
       const objectUrl = URL.createObjectURL(blob);
       let media;
       if (type === 'image') {
@@ -8018,13 +8023,14 @@ async function previewAttachment(att = {}) {
     }
 
     const url = resolveAttachmentUrl(att);
-    if (!url || !appState.token) throw new Error('attachment unavailable');
+    if (!url || !context.token) throw new Error('attachment unavailable');
     const response = await fetch(`${url}/preview`, {
-      headers: { Authorization: `Bearer ${appState.token}` },
+      headers: { Authorization: `Bearer ${context.token}` },
       credentials: RAI_IS_TAURI_DESKTOP ? 'include' : 'same-origin',
       cache: 'no-store'
     });
     const data = await response.json().catch(() => ({}));
+    if (!isUserAuthContextCurrent(context)) return false;
     if (!response.ok || data.kind !== 'text') throw new Error(data.error || `HTTP ${response.status}`);
     const previewNode = document.createElement('pre');
     previewNode.className = 'private-file-preview-text';
@@ -8032,6 +8038,7 @@ async function previewAttachment(att = {}) {
     showPrivateFilePreview({ title: data.fileName || title, contentNode: previewNode });
     return true;
   } catch (error) {
+    if (!isUserAuthContextCurrent(context)) return false;
     console.warn('附件预览失败:', error?.message || error);
     showToast(isChineseLanguage(appState.language) ? '此文件暂时无法预览，可直接下载' : 'Preview unavailable; you can still download the file');
     return false;
@@ -8180,12 +8187,14 @@ async function deleteFileLibraryItem(file = {}) {
     ? `删除“${label}”？历史对话中的这个附件也将无法下载。`
     : `Delete "${label}"? This attachment will no longer be downloadable from previous chats.`;
   if (!confirm(prompt)) return false;
+  const context = captureUserAuthContext();
   try {
     const response = await fetch(`${API_BASE}/files/${encodeURIComponent(file.id || '')}`, {
       method: 'DELETE',
-      headers: { Authorization: `Bearer ${appState.token}` }
+      headers: { Authorization: `Bearer ${context.token}` }
     });
     const data = await response.json().catch(() => ({}));
+    if (!isUserAuthContextCurrent(context)) return false;
     if (!response.ok || !data.success) throw new Error(data.error || `HTTP ${response.status}`);
     fileLibraryState.files = fileLibraryState.files.filter((entry) => entry.id !== file.id);
     fileLibraryState.storage = data.storage || fileLibraryState.storage;
@@ -8196,6 +8205,7 @@ async function deleteFileLibraryItem(file = {}) {
     showToast(isChineseLanguage(appState.language) ? '文件已删除' : 'File deleted');
     return true;
   } catch (error) {
+    if (!isUserAuthContextCurrent(context)) return false;
     showToast(localizeServerError(error?.message, isChineseLanguage(appState.language) ? '删除文件失败' : 'Could not delete file'));
     return false;
   }
@@ -8391,14 +8401,16 @@ function fileNameFromDownloadResponse(response, fallback = 'rai-artifact') {
 
 async function downloadFileJobArtifact(url) {
   const resolvedUrl = resolveProtectedFileJobUrl(url);
-  if (!resolvedUrl || !appState.token) return false;
+  const context = captureUserAuthContext();
+  if (!resolvedUrl || !context.token) return false;
   try {
     const response = await fetch(resolvedUrl, {
-      headers: { 'Authorization': `Bearer ${appState.token}` },
+      headers: { 'Authorization': `Bearer ${context.token}` },
       cache: 'no-store'
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const blob = await response.blob();
+    if (!isUserAuthContextCurrent(context)) return false;
     if (!blob.size) throw new Error('empty artifact');
     const objectUrl = URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -8410,6 +8422,7 @@ async function downloadFileJobArtifact(url) {
     setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
     return true;
   } catch (error) {
+    if (!isUserAuthContextCurrent(context)) return false;
     console.error(' 文件产物下载失败:', { name: error?.name || 'Error', messageLength: String(error?.message || '').length });
     showToast(isChineseLanguage(appState.language) ? '文件已过期、已下载或无权访问' : 'The file expired, was already downloaded, or is unavailable');
     return false;
@@ -8443,7 +8456,8 @@ function getAttachmentTypeLabel(type) {
 }
 
 function createAttachmentListItem(att = {}) {
-  const isImage = att.type === 'image' && (att.data || att.filePath || att.localThumbnail);
+  const downloadOnly = Boolean(resolveProtectedFileJobUrl(att.filePath));
+  const isImage = !downloadOnly && att.type === 'image' && (att.data || att.filePath || att.localThumbnail);
   const sizeLabel = Number(att.size) > 0 ? formatFileSize(Number(att.size)) : '';
   const itemDiv = document.createElement('div');
   itemDiv.className = `message-attachment-item ${isImage ? 'image-attachment' : 'media-attachment'}`;
@@ -8489,7 +8503,7 @@ function createAttachmentListItem(att = {}) {
       <div class="media-type">${escapeHtml(getAttachmentTypeLabel(att.type))}${sizeLabel ? ` · ${escapeHtml(sizeLabel)}` : ''}</div>
       <div class="media-name" title="${escapeHtml(att.fileName || att.originalName || '')}">${escapeHtml(att.fileName || att.originalName || '')}</div>
       ${canAccessFile ? `<div class="attachment-file-actions">
-        <button type="button" class="attachment-preview-btn">${isChineseLanguage(appState.language) ? '预览' : 'Preview'}</button>
+        ${downloadOnly ? '' : `<button type="button" class="attachment-preview-btn">${isChineseLanguage(appState.language) ? '预览' : 'Preview'}</button>`}
         <button type="button" class="attachment-download-btn">${isChineseLanguage(appState.language) ? '下载' : 'Download'}</button>
       </div>` : ''}
     </div>
@@ -8506,6 +8520,11 @@ function createAttachmentListItem(att = {}) {
 }
 
 const RAI_UPDATE_TIMELINE = [
+  {
+    date: '2026-11-19', version: 'v0.13.54',
+    zh: { summary: '修复私有缓存与附件下载。', details: ['正式版、Beta 和账号之间的会话缓存独立；退出登录会关闭私人预览。', '一次性文件只在主动下载时读取；离线首页和固定卡片的重试已修复。'] },
+    en: { summary: 'Private cache and attachment fixes.', details: ['Conversation caches are separate for each deployment and account. Signing out closes private previews.', 'One-time files are fetched only on download. Offline home and retrying a failed unpin now work correctly.'] }
+  },
   {
     date: '2026-11-13', version: 'v0.13.53 beta',
     zh: { summary: '按任务展开的交互工作台。', details: ['默认优先显示对话，右侧按需展开；两侧可拖拽调宽，仅在当前设备记住布局。', 'AI 可选择表单、选项、滑块、日期和可点击卡片等交互，只固定需要持续参考的部分，并随对话更新。手机将交互融入正文。', '左栏收起后保留导航图标；短工具任务直接使用正常回答，超过八轮工具调用才重新生成任务总结。'] },
@@ -15724,6 +15743,7 @@ function trackUserAuthRequest(controller) {
 }
 
 function invalidateUserAuthAsyncWork() {
+  document.getElementById('privateFilePreview')?.__raiClosePreview?.();
   removeAttachment();
   appState.authEpoch = Number(appState.authEpoch || 0) + 1;
   userTokenRefreshEntry?.controller?.abort?.();
@@ -31648,6 +31668,7 @@ async function syncConversationsAcrossDevices({ force = false } = {}) {
     }
     const manifestIds = new Set(manifest.sessions.map((session) => String(session.id)));
     const cachedRows = await cache?.cachedConversationRevisions?.() || [];
+    if (!isConversationCacheContextCurrent(context)) return;
     const cachedRevisions = new Map(cachedRows.map((row) => [String(row.sessionId), Number(row.revision || 0)]));
     const cachedIds = new Set(cachedRevisions.keys());
     await Promise.all(Array.from(cachedIds)

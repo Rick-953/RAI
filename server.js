@@ -2028,7 +2028,10 @@ function linkImageProviderAbort(controller, externalSignal) {
 async function readBoundedImageProviderResponse(response, maxBytes, { parseJson = false } = {}) {
     const safeMaxBytes = Math.max(1024, Number(maxBytes) || 1024);
     const declaredLength = Number(response?.headers?.get?.('content-length') || 0);
-    if (declaredLength > safeMaxBytes) throw new Error('image_provider_response_too_large');
+    if (declaredLength > safeMaxBytes) {
+        await response.body?.cancel().catch(() => null);
+        throw new Error('image_provider_response_too_large');
+    }
     if (!response?.body?.getReader) {
         throw new Error('image_provider_response_body_unavailable');
     }
