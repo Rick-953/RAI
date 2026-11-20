@@ -126,10 +126,10 @@
     heading.append(title, element('span', 'rai-visual-kind', kind));
     root.appendChild(heading);
     const note = original.type === 'budget'
-      ? t('计划值不代表真实报价。调整仅在本地生效，确认后填写草稿。', 'Planned amounts are not verified quotes. Changes stay local; confirmation fills a draft.')
+      ? t('计划值不代表实际报价。', 'Planned amounts are not verified quotes.')
       : original.type === 'comparison'
         ? t('各项使用同一单位，互不相加。点击项目可填写针对它的追问草稿。', 'All items use the same unit and are not added together. Click an item to draft a focused question.')
-        : t('勾选仅记录本地状态，不代表已核实完成。确认后填写草稿。', 'Checks record local status, not verified completion. Confirmation fills a draft.');
+        : t('勾选不代表已核实完成。', 'Checks do not verify completion.');
     root.appendChild(element('p', 'rai-visual-note', note));
     const formatter = new Intl.NumberFormat(english ? 'en-US' : 'zh-CN', {
       maximumFractionDigits: original.type === 'budget' ? schema.limits.budgetDecimals : schema.limits.comparisonDecimals
@@ -280,7 +280,7 @@
         : applyFailed ? t('未能填写草稿，请重试。', 'The draft could not be filled. Please try again.') : '';
       status.textContent = !onApply ? t('本地交互；宿主尚未连接草稿入口。', 'Local interaction; the host has not connected a draft input.')
         : dirty ? t('已修改 · 未用于后续', 'Modified · not yet used in a follow-up')
-          : appliedSnapshot !== null ? t('已填写草稿 · 尚未发送', 'Draft filled · not sent')
+          : appliedSnapshot !== null ? (options.followUpChoices ? t('已选好，下一条提问会带上这些条件。', 'Your next question will include these choices.') : t('已填写草稿 · 尚未发送', 'Draft filled · not sent'))
             : t('本地交互 · 不会自动发送', 'Local interaction · never sent automatically');
       if (applyButton) applyButton.disabled = !onApply || invalid;
       if (resetButton) resetButton.disabled = state === initialSnapshot && !invalid;

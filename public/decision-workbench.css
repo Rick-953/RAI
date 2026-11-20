@@ -349,8 +349,24 @@
 
   .decision-workbench .decision-panel-toggle {
     display: inline-flex;
-    position: relative;
+    position: absolute;
+    right: 0;
+    top: 50%;
+    bottom: auto;
+    transform: translateY(-50%);
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 48px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--text-secondary);
   }
+  .decision-panel-toggle svg { width: 16px; transition: opacity .12s; }
+  .decision-panel-toggle[aria-expanded="true"] svg { transform: rotate(180deg); }
+  .decision-panel-toggle.is-dragging svg { opacity: 0; }
+  html:not(.hand-left) .decision-workbench:not(.decision-canvas-open) .chat-index-navigator { right: 26px; }
 }
 
 @media (max-width: 768px) {
@@ -372,11 +388,8 @@
 .decision-auto-list:not(:empty) { margin-bottom: 14px; }
 .decision-auto-card > .decision-pin-visual { margin: 0; }
 .decision-auto-card > .decision-text-button { margin-top: 12px; }
-.decision-mobile-count {
-  margin-left: 3px;
-  font-size: 10px;
-  font-variant-numeric: tabular-nums;
-}
+.message-workspace-slot > .decision-auto-card > .decision-text-button,
+.message-workspace-link[hidden] { display: none; }
 .decision-resize-handle {
   position: absolute;
   top: 0;
@@ -387,7 +400,6 @@
   touch-action: none;
 }
 .decision-resize-sidebar { right: 0; }
-.decision-resize-panel { left: 0; }
 .decision-resize-handle::after {
   content: '';
   position: absolute;
@@ -404,6 +416,8 @@
 .decision-resizing .decision-resize-handle::after { background: var(--color-saturn-yellow); }
 .decision-resize-handle:focus-visible { outline: 2px solid var(--color-saturn-yellow); outline-offset: -2px; }
 .decision-resize-handle[hidden] { display: none; }
+.decision-workbench .decision-resize-panel::after { left: 10px; background: currentColor; opacity: 0; transition: opacity .12s; }
+.decision-workbench .decision-resize-panel.is-dragging::after { opacity: 1; }
 .decision-resizing { cursor: col-resize; user-select: none; }
 .decision-resizing > .sidebar { transition: none !important; }
 .message-workspace-link {
@@ -428,7 +442,7 @@
   .decision-workbench .chat-panel,
   .decision-workbench-panel,
   .decision-workbench-panel *,
-  .decision-icon-button {
+  .decision-icon-button, .decision-panel-toggle svg, .decision-panel-toggle::after {
     animation: none !important;
     transition: none !important;
   }

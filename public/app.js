@@ -18263,8 +18263,13 @@ function renderInteractiveAnswer(container, text, sources, live = false, sourceI
         link.type = 'button';
         link.className = 'message-workspace-link';
         link.textContent = part.spec.title + (isChineseLanguage(appState.language) ? ' · 在工作台查看 ↗' : ' · View in workspace ↗');
-        link.addEventListener('click', () => decisionWorkbenchController?.openVisual(visuals.keyFor(part.spec)));
-        container.appendChild(link);
+        const key = visuals.keyFor(part.spec);
+        link.addEventListener('click', () => decisionWorkbenchController?.openVisual(key));
+        const slot = document.createElement('div');
+        slot.className = 'message-workspace-slot';
+        slot.appendChild(link);
+        container.appendChild(slot);
+        decisionWorkbenchController?.bindVisualSlot(slot, key, sourceId);
       } else {
         const host = document.createElement('div');
         host.className = 'message-interactive-visual';

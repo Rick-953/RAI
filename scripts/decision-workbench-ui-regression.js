@@ -76,10 +76,11 @@ async function fixture(browser, mobile) {
     const req = route.request();
     const pathname = new URL(req.url()).pathname;
     if (pathname.startsWith('/api/')) {
-      const match = pathname.match(/^\/api\/sessions\/([^/]+)\/decision-pins(?:\/(\d+))?$/);
+      const match = pathname.match(/^\/api\/sessions\/([^/]+)\/decision-pins(?:\/(\d+|choices))?$/);
       assert.ok(match, `only decision-pin requests are allowed: ${pathname}`);
       const entry = { method: req.method(), path: pathname, user: req.headers()['x-fixture-user'], body: req.postDataJSON() };
       requests.push(entry);
+      if (match[2] === 'choices') return route.fulfill({ status: 204, body: '' });
       const key = `${entry.user}/${decodeURIComponent(match[1])}`;
       const saved = data.get(key) || [];
       const error = nextError?.method === entry.method ? nextError : null;
@@ -294,8 +295,9 @@ async function desktopChecks(browser) {
     assert.equal(await page.evaluate(() => savedBudgetNode === document.querySelector('.rai-visual-number[data-field="item-0"]')), true);
 
     await page.locator('.rai-visual-button[data-action="apply"]').first().click();
-    assert.ok(!(await page.locator('#messageInput').inputValue()).includes('512.35'));
-    assert.equal(f.requests.filter(item => item.method !== 'GET').length, 0, 'visual trials only stage drafts');
+    assert.equal(await page.locator('#messageInput').inputValue(), '');
+    assert.match(await page.evaluate(() => fixture.controller.takeChoiceSummary()), /512.35/);
+    assert.ok(f.requests.some(item => item.path.endsWith('/choices') && item.body.values.includes(512.35)));
     await page.locator('.decision-pin-card').first().getByRole('button', { name: '查看原文' }).click();
     assert.deepEqual(await page.evaluate(() => fixture.sources), [10]);
     await page.locator('.decision-pin-card').first().getByRole('button', { name: '引用到输入框' }).click();
@@ -501,7 +503,7 @@ async function resizeChecks(page) {
   await settleLayout(page, 260, 368);
   await page.locator('#decisionPanelToggle').click();
   await settleLayout(page, 260, 0);
-  assert.equal(await right.isVisible(), false);
+  assert.equal(await right.isVisible(), true, 'the same edge handle reopens the closed panel');
   await openPanel(page);
   await settleLayout(page, 260, 368);
 }
