@@ -25,7 +25,7 @@ assert.deepEqual(partial.observe('one',{usage:{prompt_tokens:10,prompt_cache_hit
 assert.deepEqual(partial.begin('two'),{});
 assert.deepEqual(partial.observe('two',{usage:{prompt_tokens:20,completion_tokens:2}}),{prompt_tokens:30,completion_tokens:6,total_tokens:36},'a missing cache counter stays unknown with a valid aggregate input');
 assert.equal(partial.observe('two',{usage:{prompt_cache_hit_tokens:0}}).prompt_cache_hit_tokens,8,'explicit zero completes a real aggregate cache count');
-for(const model of ['deepseek-flash','deepseek-v4.1-flash','gpt-6.1-sol','gpt-6-astra'])assert.equal(requestChatStreamUsage({model,stream:true}).stream_options.include_usage,true);
+for(const model of ['deepseek-flash','deepseek-v4.1-flash','gpt-6.2-sol','gpt-6.2-astra'])assert.equal(requestChatStreamUsage({model,stream:true}).stream_options.include_usage,true);
 assert.equal(requestChatStreamUsage({model:'custom-model',stream:true}).stream_options,undefined,'do not add unsupported parameters to arbitrary providers');
 assert.equal(requestChatStreamUsage({model:'deepseek-flash',stream:false}).stream_options,undefined);
 console.log('PASS: normal chat requests ask for real usage; cumulative snapshots and tool-round totals preserve cache counters');

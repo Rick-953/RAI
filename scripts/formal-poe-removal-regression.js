@@ -138,8 +138,8 @@ function testRetiredRequestsFallBackSafely(serverSource) {
         assert.equal(harness.normalize(unknownId), 'auto', `${unknownId || '(empty)'} must normalize to auto`);
     }
     assert.equal(harness.normalize('deepseek-pro'), 'deepseek-v4.1-flash');
-    assert.equal(harness.normalize('gpt-5.6-sol'), 'gpt-6.1-sol');
-    assert.equal(harness.normalize('gpt-6-sol'), 'gpt-6.1-sol');
+    assert.equal(harness.normalize('gpt-5.6-sol'), 'gpt-6.2-sol');
+    assert.equal(harness.normalize('gpt-6-sol'), 'gpt-6.2-sol');
     assert.equal(harness.normalize('Qwen/Qwen3.6-35B-A3B'), 'auto');
 
     assert.equal(harness.routing.auto?.isAutoMode, true, 'auto route must remain intact');
@@ -157,13 +157,13 @@ function testChatAndConfigUseGuardedNormalization(serverSource) {
     assert.match(serverSource, /let\s+model\s*=\s*normalizeIncomingModelId\(requestedModel\)/, 'chat requests must normalize retired and unknown IDs');
     const { sanitize } = buildModelHarness(serverSource);
     assert.equal(sanitize({}).default_model, null, 'omitted model must preserve the stored preference');
-    for (const modelId of ['auto', 'gpt-6.1-sol', 'gpt-6-luna', 'deepseek-v4.1-flash']) {
+    for (const modelId of ['auto', 'gpt-6.2-sol', 'gpt-6-luna', 'deepseek-v4.1-flash']) {
         assert.equal(sanitize({ default_model: modelId }).default_model, modelId, 'valid model preference must be retained');
     }
     for (const modelId of ['poe-claude', 'poe-gpt', 'poe-gemini', 'poe-grok', 'unknown-provider-model', 'https://attacker.invalid/model']) {
         assert.equal(sanitize({ default_model: modelId }).default_model, 'auto', 'retired or unknown model preference must use safe auto routing');
     }
-    assert.equal(sanitize({ default_model: 'gpt-6-sol' }).default_model, 'gpt-6.1-sol', 'legacy aliases must retain a supported preference');
+    assert.equal(sanitize({ default_model: 'gpt-6-sol' }).default_model, 'gpt-6.2-sol', 'legacy aliases must retain a supported preference');
     assert.match(serverSource, /if\s*\(model\s*===\s*['"]auto['"]\s*\|\|\s*model\s*===\s*['"]fast-auto['"]\s*\|\|\s*model\s*===\s*['"]think-auto['"]\)/,
         'normalized automatic requests must enter the safe automatic route');
 }

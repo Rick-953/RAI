@@ -2422,8 +2422,8 @@ function getRaiWebBasePath() {
 const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
-const RAI_APP_VERSION = '0.13.55';
-const RAI_BUILD_ID = '20261120-card-choices';
+const RAI_APP_VERSION = '0.13.56';
+const RAI_BUILD_ID = '20261120-models62';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -5040,8 +5040,8 @@ const MODELS = {
     "compressionThreshold": 400000,
     "maxTokens": 8000
   },
-  'gpt-6.1-sol': {
-    "name": "GPT 6.1 Sol",
+  'gpt-6.2-sol': {
+    "name": "GPT 6.2 Sol",
     "provider": "rai_gpt_gateway",
     "supportsThinking": true,
     "supportsReasoningProfile": true,
@@ -5068,8 +5068,8 @@ const MODELS = {
     "compressionThreshold": 258000,
     "maxTokens": 8000
   },
-  'gpt-6-astra': {
-    "name": "GPT 6 Astra",
+  'gpt-6.2-astra': {
+    "name": "GPT 6.2 Astra",
     "provider": "rai_gpt_gateway",
     "supportsThinking": true,
     "supportsReasoningProfile": true,
@@ -5085,10 +5085,11 @@ const MODELS = {
 };
 
 const LEGACY_MODEL_ALIASES = {
-  // Keep the stable public GPT 6 selection while its upstream route uses Terra.
-  'gpt-5.6': 'gpt-6.1-sol',
-  'gpt-5.6-sol': 'gpt-6.1-sol',
-  'gpt-6-sol': 'gpt-6.1-sol',
+  'gpt-5.6': 'gpt-6.2-sol',
+  'gpt-5.6-sol': 'gpt-6.2-sol',
+  'gpt-6-sol': 'gpt-6.2-sol',
+  'gpt-6.1-sol': 'gpt-6.2-sol',
+  'gpt-6-astra': 'gpt-6.2-astra',
   'gpt-5.6-terra': 'deepseek-v4.1-flash',
   'gpt-5.6-luna': 'gpt-6-luna',
   'claude-opus-5': 'claude-sonnet-5',
@@ -5140,7 +5141,7 @@ function currentThinkingCapability() {
   const supportsThinking = model.supportsThinking === true;
   const profiles = Array.isArray(model.thinkingProfiles) && model.thinkingProfiles.length
     ? model.thinkingProfiles.filter(profile => REASONING_PROFILE_ORDER.includes(profile)) : REASONING_PROFILE_ORDER;
-  return { supportsThinking, canDisableThinking: selected === 'auto' || (model.canDisableThinking !== false && actual !== 'gpt-6.1-sol'), profiles };
+  return { supportsThinking, canDisableThinking: selected === 'auto' || (model.canDisableThinking !== false && actual !== 'gpt-6.2-sol'), profiles };
 }
 
 function modelPreferenceStorageKey() {
@@ -8520,6 +8521,11 @@ function createAttachmentListItem(att = {}) {
 }
 
 const RAI_UPDATE_TIMELINE = [
+  {
+    date: '2026-11-20', version: 'v0.13.56',
+    zh: { summary: 'Astra 和 Sol 升级至 GPT 6.2。', details: ['旧会话可以继续使用，过去 24 小时的已用额度不变。'] },
+    en: { summary: 'Astra and Sol now use GPT 6.2.', details: ['Continue existing conversations with the same rolling 24-hour allowance.'] }
+  },
   {
     date: '2026-11-20', version: 'v0.13.55',
     zh: { summary: '交互卡片记住选择。', details: ['普通会话自动保存选择。确认后只填写简短的提问，下一条消息携带已选条件，不再展示控件 JSON。'] },
@@ -13721,8 +13727,8 @@ function normalizeResearchMode(value) {
 
 const RESEARCH_MODEL_OPTIONS = [
   { id: 'deepseek-v4.1-flash', label: 'DeepSeek V4.1 Flash' },
-  { id: 'gpt-6.1-sol', label: 'GPT 6.1 Sol' },
-  { id: 'gpt-6-astra', label: 'GPT 6 Astra' }
+  { id: 'gpt-6.2-sol', label: 'GPT 6.2 Sol' },
+  { id: 'gpt-6.2-astra', label: 'GPT 6.2 Astra' }
 ];
 
 function normalizeResearchModelId(modelId) {
@@ -34571,7 +34577,7 @@ function openGitHubStarTask() {
 
 function renderMembershipModelPricing() {
   const isZh = isChineseLanguage(appState.language);
-  const rows = [['GPT 6 Astra', 3, 50, 80], ['GPT 6.1 Sol', 50, 100, 200]];
+  const rows = [['GPT 6.2 Astra', 3, 50, 80], ['GPT 6.2 Sol', 50, 100, 200]];
   return `<div class="membership-model-pricing">
     <h3>${isZh ? '滚动 24 小时对话额度' : 'Rolling 24-hour conversation allowance'}</h3>
     <div class="membership-model-pricing-list"><div><span>${isZh ? '模型' : 'Model'}</span><strong>Free / Pro / MAX</strong></div>
@@ -36046,8 +36052,8 @@ async function loadAdminLimits() {
             ${profileSelectField('smart_reasoning_profile', '智能模式思考等级', s.smart_default_model || 'gpt-6-luna', s.smart_reasoning_profile, 'none')}
             ${modelSelectField('fast_default_model', '关闭思考时默认模型', routingCandidates, s.fast_default_model || 'gpt-6-luna')}
             ${profileSelectField('fast_reasoning_profile', '关闭思考时等级', s.fast_default_model || 'gpt-6-luna', s.fast_reasoning_profile, 'none')}
-            ${modelSelectField('thinking_default_model', '兼容思考模式默认模型', routingCandidates, s.thinking_default_model || 'gpt-6.1-sol')}
-            ${profileSelectField('thinking_reasoning_profile', '兼容思考模式等级', s.thinking_default_model || 'gpt-6.1-sol', s.thinking_reasoning_profile, 'auto')}
+            ${modelSelectField('thinking_default_model', '兼容思考模式默认模型', routingCandidates, s.thinking_default_model || 'gpt-6.2-sol')}
+            ${profileSelectField('thinking_reasoning_profile', '兼容思考模式等级', s.thinking_default_model || 'gpt-6.2-sol', s.thinking_reasoning_profile, 'auto')}
             ${modelSelectField('selection_explanation_model', '划词解释首选模型', selectionExplanationCandidates, s.selection_explanation_model, '默认使用硅基流动 DeepSeek V4.1 Flash；4 秒无首字时自动切换备用模型')}
           </div>
           <div class="admin-model-switch-note">智能/快速/思考首选若被关闭、凭据缺失或上游失败，会自动回落到内置备用链；隐藏模型请在「模型管理」中关闭对应开关。</div>

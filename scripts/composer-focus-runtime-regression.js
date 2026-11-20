@@ -111,7 +111,7 @@ async function testCase(browser, url, fixture) {
     // Supported reasoning choices must survive real pointer, touch, keyboard and locale changes.
     await page.evaluate(() => {
       appState.handednessEnabled = false; applyHandednessLayout();
-      appState.selectedModel = 'gpt-6.1-sol'; appState.thinkingMode = true;
+      appState.selectedModel = 'gpt-6.2-sol'; appState.thinkingMode = true;
       setReasoningProfile('max');
     });
     await page.locator('#moreBtn').click();
@@ -134,7 +134,7 @@ async function testCase(browser, url, fixture) {
     await choices.locator('[data-profile="max"]').focus();
     await page.keyboard.press('Space');
     assert.equal(await page.evaluate(() => appState.reasoningProfile), 'max');
-    const names = ['DeepSeek V4.1 Flash', 'GPT 6.1 Sol', 'GPT 6 Luna', 'GPT 6 Astra'];
+    const names = ['DeepSeek V4.1 Flash', 'GPT 6.2 Sol', 'GPT 6 Luna', 'GPT 6.2 Astra'];
     for (const [lang, label] of [['zh-CN', '最大'], ['zh-TW', '最大'], ['en', 'Max']]) {
       const localized = await page.evaluate(lang => {
         setLanguage(lang); updateToolbarUI(); renderResearchModelControls();
@@ -144,7 +144,7 @@ async function testCase(browser, url, fixture) {
           value: document.querySelector('#reasoningProfileChoices [aria-pressed="true"]')?.dataset.profile,
           profile: appState.reasoningProfile,
           normalized: ['auto', 'low', 'medium', 'high', 'xhigh', 'max', 'mixed', ' MAX ', 'bad'].map(normalizeReasoningProfile),
-          models: Array.from(document.querySelectorAll('#modelDropdownMenu [data-model]')).filter(el => el.querySelector('.model-menu-name') && ['deepseek-v4.1-flash','gpt-6.1-sol','gpt-6-luna','gpt-6-astra'].includes(el.dataset.model)).map(el => ({ name: el.textContent.trim(), extras: !!el.querySelector('.model-badge,.model-menu-desc') })),
+          models: Array.from(document.querySelectorAll('#modelDropdownMenu [data-model]')).filter(el => el.querySelector('.model-menu-name') && ['deepseek-v4.1-flash','gpt-6.2-sol','gpt-6-luna','gpt-6.2-astra'].includes(el.dataset.model)).map(el => ({ name: el.textContent.trim(), extras: !!el.querySelector('.model-badge,.model-menu-desc') })),
           agents: Array.from(document.querySelectorAll('#researchAgentModelList button')).map(el => el.textContent.trim()),
           masters: Array.from(document.querySelectorAll('#researchMasterModelSelect option')).map(el => el.textContent.trim())
         };
@@ -154,7 +154,7 @@ async function testCase(browser, url, fixture) {
       assert.equal(localized.value, 'max'); assert.equal(localized.profile, 'max');
       assert.deepEqual(localized.normalized, ['auto', 'low', 'medium', 'high', 'xhigh', 'max', 'max', 'max', 'low']);
       assert.deepEqual(localized.models, names.map(name => ({ name, extras: false })));
-      const researchNames = ['DeepSeek V4.1 Flash', 'GPT 6.1 Sol', 'GPT 6 Astra'];
+      const researchNames = ['DeepSeek V4.1 Flash', 'GPT 6.2 Sol', 'GPT 6.2 Astra'];
       assert.deepEqual(localized.agents, researchNames); assert.deepEqual(localized.masters, researchNames);
     }
     const requestProfiles = await page.evaluate(() => {
@@ -341,9 +341,9 @@ async function testCase(browser, url, fixture) {
     const captured = [];
     await page.route('**/api/chat/stream', async route => {
       captured.push(route.request().postDataJSON());
-      await route.fulfill({status:200,contentType:'text/event-stream',body:'data: {"type":"done","actualModel":"gpt-6.1-sol"}\n\ndata: [DONE]\n\n'});
+      await route.fulfill({status:200,contentType:'text/event-stream',body:'data: {"type":"done","actualModel":"gpt-6.2-sol"}\n\ndata: [DONE]\n\n'});
     });
-    await page.evaluate(() => { appState.token = 'fixture-only-not-a-real-credential'; appState.currentSession={id:'composer-fixture',model:'gpt-6.1-sol'}; });
+    await page.evaluate(() => { appState.token = 'fixture-only-not-a-real-credential'; appState.currentSession={id:'composer-fixture',model:'gpt-6.2-sol'}; });
     const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a/yUAAAAASUVORK5CYII=', 'base64');
     const files = [
       { name:'first.png',mimeType:'image/png',buffer:png },
@@ -362,7 +362,7 @@ async function testCase(browser, url, fixture) {
     // Use actual sending code, with only session identity mocked in this no-account fixture.
     await page.evaluate(() => {
       window.ensureCurrentSessionPromptIdentity = async () => {};
-      appState.selectedModel='gpt-6.1-sol'; appState.currentSessionMemoryMode='classic-temp';
+      appState.selectedModel='gpt-6.2-sol'; appState.currentSessionMemoryMode='classic-temp';
       appState.isStreaming=false; appState.sendStarting=false; appState.messages=[];
       document.getElementById('messageInput').value='请比较图片并结合两个文件回答';
       window.composerFixtureSend = sendMessage();

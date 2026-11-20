@@ -6,7 +6,7 @@ const http = require('node:http');
 const { chromium } = require('playwright');
 const root = path.resolve(__dirname, '../public');
 const requests = [];
-const sol = { id: 'gpt-6.1-sol', name: 'GPT 6.1 Sol', enabled: true, builtin: true, provider: 'rai_gpt_gateway',
+const sol = { id: 'gpt-6.2-sol', name: 'GPT 6.2 Sol', enabled: true, builtin: true, provider: 'rai_gpt_gateway',
   supportsThinking: true, canDisableThinking: false, thinkingProfiles: ['auto','low','medium','high','xhigh','max'], vision: true };
 const ds = { id: 'deepseek-v4.1-flash', name: 'DeepSeek V4.1 Flash', enabled: true, builtin: true, provider: 'deepseek',
   supportsThinking: true, canDisableThinking: true, thinkingProfiles: ['auto','high','max'], vision: true };
@@ -116,7 +116,7 @@ const tableSamples = [
     return {thinking:appState.thinkingMode,profile:getRequestReasoningProfileForCurrentMode()};
   }),{thinking:true,profile:'low'},'Restoring thinking before the profile preserves a valid Smart Low selection');
   await page.locator('#moreBtn').click();
-  await openAllModels();await page.locator('#allModelsSection [data-model="gpt-6.1-sol"]').first().click();
+  await openAllModels();await page.locator('#allModelsSection [data-model="gpt-6.2-sol"]').first().click();
   await page.locator('#moreBtn').click();await page.locator('.reasoning-profile-header').hover();
   await page.locator('.reasoning-profile-header').click();
   assert.equal(await page.evaluate(()=>appState.thinkingMode),true);
@@ -142,7 +142,7 @@ const tableSamples = [
   await page.locator('#reasoningProfileChoices [data-profile="high"]').click();
   await page.locator('#moreBtn').click();
   await openAllModels();
-  await page.locator('#allModelsSection [data-model="gpt-6.1-sol"]').first().click();
+  await page.locator('#allModelsSection [data-model="gpt-6.2-sol"]').first().click();
   assert.deepEqual(await page.evaluate(()=>({model:appState.selectedModel,profile:appState.reasoningProfile,
     stored:JSON.parse(localStorage.getItem(modelPreferenceStorageKey())).reasoningProfile})),
     {model:sol.id,profile:'high',stored:'high'},'valid DeepSeek High preference survives switching to Sol');

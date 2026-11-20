@@ -36,7 +36,7 @@ async function close(server) {
 }
 
 async function main() {
-    assert.deepStrictEqual(GPT_GATEWAY_CHAT_MODELS, ['gpt-6.1-sol', 'gpt-6-astra']);
+    assert.deepStrictEqual(GPT_GATEWAY_CHAT_MODELS, ['gpt-6.2-sol', 'gpt-6.2-astra']);
     assert.strictEqual(GPT_GATEWAY_IMAGE_MODEL, 'gpt-image-2.6');
     assert.strictEqual(normalizeGatewayBaseUrl('https://gateway.example/v1/'), 'https://gateway.example/v1');
     assert.strictEqual(joinGatewayEndpoint('https://gateway.example/v1', '/chat/completions'), 'https://gateway.example/v1/chat/completions');
@@ -53,12 +53,12 @@ async function main() {
     }
     assert.throws(() => buildGatewayHeaders(''), /api_key_missing/);
     assert.deepStrictEqual(
-        applyGatewayChatRequestPolicy({ model: 'gpt-6.1-sol', temperature: 0.7, top_p: 0.9 }, { thinkingMode: false, reasoningEffort: 'none' }),
-        { model: 'gpt-6.1-sol' }
+        applyGatewayChatRequestPolicy({ model: 'gpt-6.2-sol', temperature: 0.7, top_p: 0.9 }, { thinkingMode: false, reasoningEffort: 'none' }),
+        { model: 'gpt-6.2-sol' }
     );
     assert.deepStrictEqual(
-        applyGatewayChatRequestPolicy({ model: 'gpt-6.1-sol', temperature: 0.7, top_p: 0.9 }, { thinkingMode: true, reasoningEffort: 'xhigh' }),
-        { model: 'gpt-6.1-sol', reasoning_effort: 'xhigh' }
+        applyGatewayChatRequestPolicy({ model: 'gpt-6.2-sol', temperature: 0.7, top_p: 0.9 }, { thinkingMode: true, reasoningEffort: 'xhigh' }),
+        { model: 'gpt-6.2-sol', reasoning_effort: 'xhigh' }
     );
     const continuationPolicyBody = applyGatewayChatRequestPolicy({
         model: 'gpt-5.6-terra',
@@ -132,7 +132,7 @@ async function main() {
                 res.end(JSON.stringify({ data: [{ b64_json: encoded }] }));
                 return;
             }
-            if (body.model === 'gpt-6-astra') return;
+            if (body.model === 'gpt-6.2-astra') return;
             res.end(JSON.stringify({ choices: [{ message: { content: 'ok' } }] }));
         });
     });
@@ -152,7 +152,7 @@ async function main() {
         assert.equal((edit.multipart.match(/name="image\[\]"/g) || []).length, 2);
         for (const value of ['2048x2048', 'gpt-image-2.6', 'reference-bytes-one', 'reference-bytes-two', 'first.png', 'second.png']) assert.ok(edit.multipart.includes(value));
         const multimodalBody = applyGatewayChatRequestPolicy({
-            model: 'gpt-6.1-sol',
+            model: 'gpt-6.2-sol',
             messages: [{
                 role: 'user',
                 content: [
@@ -229,7 +229,7 @@ async function main() {
                     baseUrl,
                     endpoint: 'chat/completions',
                     apiKey: testKey,
-                    body: { model: 'gpt-6-astra', messages: [{ role: 'user', content: 'wait' }], stream: true },
+                    body: { model: 'gpt-6.2-astra', messages: [{ role: 'user', content: 'wait' }], stream: true },
                     signal: cancelController.signal
                 }),
                 (error) => error?.name === 'AbortError',
@@ -254,14 +254,14 @@ async function main() {
         assert.ok(serverSource.includes(`'${modelId}': {`), `routing missing ${modelId}`);
         assert.ok(appSource.includes(`'${modelId}': {`), `client catalog missing ${modelId}`);
     }
-    assert.ok(indexSource.includes('data-model="gpt-6.1-sol"'), 'focused model UI must expose GPT-6.1 Sol');
+    assert.ok(indexSource.includes('data-model="gpt-6.2-sol"'), 'focused model UI must expose GPT 6.2 Sol');
     for (const hiddenModelId of ['gpt-5.6-sol', 'gpt-6-sol', 'gpt-5.6-terra']) {
         assert.ok(!indexSource.includes(`data-model="${hiddenModelId}"`), `internal model must stay out of the focused picker: ${hiddenModelId}`);
     }
     assert.match(serverSource, /'gpt-5\.6-terra': 'deepseek-v4.1-flash'/,
         'legacy Terra requests must route through the stable public GPT 6 Luna ID');
-    assert.match(serverSource, /'gpt-6.1-sol': \{[\s\S]{0,180}model: 'gpt-6.1-sol'/,
-        'GPT-6.1 Sol must call the GPT-6.1 Sol upstream model');
+    assert.match(serverSource, /'gpt-6.2-sol': \{[\s\S]{0,180}model: 'gpt-6.2-sol'/,
+        'GPT 6.2 Sol must call the GPT 6.2 Sol upstream model');
     const chatModelSection = indexSource.slice(indexSource.indexOf('model-menu-section-label">对话模型'), indexSource.indexOf('model-menu-section-label">图像生成'));
     const imageModelSection = indexSource.slice(indexSource.indexOf('model-menu-section-label">图像生成'), indexSource.indexOf('</div>\n                </div>\n              </div>\n\n              <button type="button" class="send-btn"'));
     assert.ok(!chatModelSection.includes('data-model="gpt-image-2"'), 'Image 2 must not appear in the chat-model picker');

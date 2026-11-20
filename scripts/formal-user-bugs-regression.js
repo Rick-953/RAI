@@ -559,8 +559,8 @@ function testFocusedModelUiReasoningAndSwipe() {
   assert.ok(allModelsStart >= 0 && allModelsEnd > allModelsStart, 'missing focused all-models section');
   const allModels = index.slice(allModelsStart, allModelsEnd);
   const visibleModelIds = [...allModels.matchAll(/data-model="([^"]+)"/g)].map((match) => match[1]);
-  assert.deepEqual(visibleModelIds, ['deepseek-v4.1-flash','gpt-6.1-sol','gpt-6-luna','gpt-6-astra']);
-  for(const label of ['DeepSeek V4.1 Flash','GPT 6.1 Sol','GPT 6 Luna','GPT 6 Astra']) assert.ok(allModels.includes('>'+label+'<'));
+  assert.deepEqual(visibleModelIds, ['deepseek-v4.1-flash','gpt-6.2-sol','gpt-6-luna','gpt-6.2-astra']);
+  for(const label of ['DeepSeek V4.1 Flash','GPT 6.2 Sol','GPT 6 Luna','GPT 6.2 Astra']) assert.ok(allModels.includes('>'+label+'<'));
   assert.doesNotMatch(allModels, /model-menu-description|>\s*(?:gpt-|deepseek-|nemotron-)/,
     'the user-facing model list must not expose implementation IDs');
 
@@ -581,7 +581,7 @@ function testFocusedModelUiReasoningAndSwipe() {
   assert.match(app, /if \(normalized === 'smart'\)[\s\S]{0,220}model: 'auto'/);
   assert.match(app, /if \(normalized === 'think'\)[\s\S]{0,220}model: 'auto'[\s\S]{0,100}thinkingMode: true/);
   assert.match(app, /mode: 'fast',[\s\S]{0,80}model: 'auto'[\s\S]{0,80}thinkingMode: false/);
-  for(const id of ['gpt-6.1-sol','gpt-6-astra']) {
+  for(const id of ['gpt-6.2-sol','gpt-6.2-astra']) {
     const route = server.slice(server.indexOf("    '" + id + "': {", server.indexOf('const MODEL_ROUTING = {')));
     assert.match(route.slice(0,350), /provider: 'rai_gpt_gateway'/);
     assert.ok(route.slice(0,350).includes("model: '"+id+"'"));

@@ -1,3 +1,7 @@
+## 0.13.56 - 2026-11-20
+
+- Replace Astra and Sol with GPT 6.2 in chat and research. Retired IDs route to the corresponding new model; existing conversations, administrator switches and rolling 24-hour usage carry over.
+
 ## 0.13.55 - 2026-11-20
 
 - 普通会话的卡片只保存可编辑值；不改原回复，临时会话不写入。确认不再将控件 JSON 塞进输入框，选择作为独立的用户数据随提问传递。

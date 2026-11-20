@@ -48,7 +48,7 @@ async function main(){
   observations.push({url:req.url,host:req.headers.host,body});
   if(req.url==='/v1/responses/input_tokens'){
    const input=JSON.stringify(body.input);
-   const inputTokens=body.model==='gpt-6.1-sol'&&input.includes('Old fact')?Math.ceil(input.length*1.6):1024;
+   const inputTokens=body.model==='gpt-6.2-sol'&&input.includes('Old fact')?Math.ceil(input.length*1.6):1024;
    res.setHeader('Content-Type','application/json');res.end(JSON.stringify({input_tokens:inputTokens}));return;
   }
   if(req.url==='/v1/responses'){
@@ -69,7 +69,7 @@ async function main(){
    res.write('data: '+JSON.stringify({choices:[],usage:{prompt_tokens:100,completion_tokens:4,prompt_cache_hit_tokens:80}})+'\n\n');res.end('data: [DONE]\n\n');return;
   }
   if(mode==='cancel'){res.write('data: '+JSON.stringify({choices:[{delta:{content:'partial'},finish_reason:null}]})+'\n\n');req.on('close',()=>res.end());return;}
-  if(body.model==='gpt-6.1-sol')res.write('data: '+JSON.stringify({choices:[{delta:{reasoning_content:'Provider reasoning.'}}]})+'\n\n');
+  if(body.model==='gpt-6.2-sol')res.write('data: '+JSON.stringify({choices:[{delta:{reasoning_content:'Provider reasoning.'}}]})+'\n\n');
   res.write('data: '+JSON.stringify({choices:[{delta:{content:'Runtime answer complete.'},finish_reason:mode==='length'?'length':'stop'}]})+'\n\n');
   if(mode!=='remote')for(let i=0;i<2;i++)res.write('data: '+JSON.stringify({choices:[],usage:{prompt_tokens:1024,completion_tokens:8,total_tokens:1032,prompt_cache_hit_tokens:768}})+'\n\n');
   res.end('data: [DONE]\n\n');
@@ -90,7 +90,7 @@ async function main(){
     if(requestId)assert.equal((await dbGet(db,'SELECT COUNT(*) AS n FROM active_requests WHERE id = ?',[requestId])).n,0,'an ended response must release its concurrency slot: '+model);
     return{status:response.status,raw,events:raw.split(/\r?\n/).filter(x=>x.startsWith('data: ')&&!x.includes('[DONE]')).map(x=>JSON.parse(x.slice(6)))};
    }
-   const availability=await(await fetch(baseUrl+'/api/model-availability')).json();assert.deepEqual(availability.models.map(x=>x.id),['deepseek-v4.1-flash','gpt-6.1-sol','gpt-6-luna','gpt-6-astra']);assert.deepEqual(availability.models.find(x=>x.id==='gpt-6-luna').limits,{free:100,pro:200,max:500});assert.equal(availability.contextWindow,272000);
+   const availability=await(await fetch(baseUrl+'/api/model-availability')).json();assert.deepEqual(availability.models.map(x=>x.id),['deepseek-v4.1-flash','gpt-6.2-sol','gpt-6-luna','gpt-6.2-astra']);assert.deepEqual(availability.models.find(x=>x.id==='gpt-6-luna').limits,{free:100,pro:200,max:500});assert.equal(availability.contextWindow,272000);
    assert.deepEqual(availability.smartDefaults,{model:'gpt-6-luna',reasoningProfile:'none',thinkingMode:false});
    assert.deepEqual(availability.fastDefaults,{model:'gpt-6-luna',reasoningProfile:'none',thinkingMode:false});
    async function gptTurnCount(){return await dbGet(db,"SELECT name FROM sqlite_master WHERE type='table' AND name='chat_model_turns'")?(await dbGet(db,"SELECT count(*) AS n FROM chat_model_turns")).n:0;}
@@ -109,14 +109,19 @@ async function main(){
    const bareRequest=observations.filter(x=>x.body.stream).at(-1);
    assert.equal((officialLuna?bareRequest.body.reasoning.effort:bareRequest.body.reasoning_effort),'none','omitted preferences default to thinking off');
    assert.equal(await gptTurnCount(),gptTurnsBefore+3,'each default Luna answer consumes one completed Luna allowance');
-   for(let i=0;i<3;i++){const response=await chat('gpt-6-astra');assert.equal(response.status,200);assert.ok(response.events.some(x=>x.type==='done'&&!x.degraded),response.raw.slice(-3000));}
+   await dbRun(db,"INSERT INTO chat_model_turns(user_id,request_id,model_id,status,completed_at,lease_until) SELECT id,'before-upgrade','gpt-6-astra','completed',?,0 FROM users LIMIT 1",[Date.now()]);
+   for(const model of ['gpt-6-astra','gpt-6.2-astra']){
+    const start=observations.length,response=await chat(model);
+    assert.equal(response.status,200);assert.ok(response.events.some(event=>event.type==='done'&&event.actualModel==='gpt-6.2-astra'&&!event.degraded),response.raw.slice(-3000));
+    const request=observations.slice(start).find(item=>item.body.stream);assert.equal(request.body.model,'gpt-6.2-astra');assert.equal(request.body.stream_options.include_usage,true);
+   }
    assert.equal((await dbGet(db,"SELECT count(*) AS n FROM chat_model_turns WHERE model_id='gpt-6-astra' AND status='completed'")).n,3);
-   const before=observations.length,blocked=await chat('gpt-6-astra');assert.equal(blocked.status,429);assert.equal(JSON.parse(blocked.raw).code,'model_chat_quota_exceeded');assert.equal(observations.length,before,'quota cannot issue provider request');
-   const minimumEffort=await chat('gpt-6.1-sol',{thinkingMode:false});assert.ok(minimumEffort.events.some(x=>x.type==='done'&&!x.degraded),minimumEffort.raw.slice(-2000));assert.equal(observations.filter(x=>x.body.model==='gpt-6.1-sol').at(-1).body.reasoning_effort,'low');
+   const before=observations.length,blocked=await chat('gpt-6.2-astra');assert.equal(blocked.status,429);assert.equal(JSON.parse(blocked.raw).code,'model_chat_quota_exceeded');assert.equal(observations.length,before,'quota cannot issue provider request');
+   const minimumEffort=await chat('gpt-6.2-sol',{thinkingMode:false});assert.ok(minimumEffort.events.some(x=>x.type==='done'&&!x.degraded),minimumEffort.raw.slice(-2000));assert.equal(observations.filter(x=>x.body.model==='gpt-6.2-sol').at(-1).body.reasoning_effort,'low');
    assert.ok(minimumEffort.events.some(x=>x.type==='reasoning'&&x.content==='Provider reasoning.'),'legacy GPT off must reveal actual low reasoning');
-   assert.equal(observations.filter(x=>x.body.model==='gpt-6.1-sol').at(-1).host,new URL(primaryBase).host,'GPT uses M primary before Fast');
+   assert.equal(observations.filter(x=>x.body.model==='gpt-6.2-sol').at(-1).host,new URL(primaryBase).host,'GPT uses M primary before Fast');
    await delay(20);
-   const timeline=logs.split(/\r?\n/).flatMap(line=>{try{return [JSON.parse(line)];}catch(_){return [];}}).filter(x=>x.event==='chat_latency'&&x.model==='gpt-6.1-sol').at(-1);
+   const timeline=logs.split(/\r?\n/).flatMap(line=>{try{return [JSON.parse(line)];}catch(_){return [];}}).filter(x=>x.event==='chat_latency'&&x.model==='gpt-6.2-sol').at(-1);
    assert.ok(timeline,'completed request emits one latency summary');
    assert.equal(timeline.attempts[0].provider,'gpt_mirrorium');
    assert.ok(timeline.stages.first_reasoning_write>=timeline.attempts[0].first_reasoning);
@@ -150,7 +155,7 @@ async function main(){
    const deepSeekMessages=observations.slice(beforeDeepSeek).find(x=>x.body.stream).body.messages;
    assert.ok(deepSeekMessages.some(x=>typeof x.content==='string'&&x.content.includes(deepSeekText)),'DeepSeek receives the complete original input beside the existing time hint');
    const history=Array.from({length:18},(_,i)=>({role:i%2?'assistant':'user',content:'Old fact '+i+' '+ '中'.repeat(9000)}));history.push({role:'user',content:'LATEST_USER_QUESTION'});
-   const compressed=await chat('gpt-6.1-sol',{messages:history,reasoningProfile:'auto'});assert.ok(compressed.events.some(x=>x.type==='context_compressed'),compressed.raw.slice(-4000)+'\n'+logs.slice(-18000));assert.ok(compressed.events.some(x=>x.type==='done'&&!x.degraded),compressed.raw.slice(-3000));assert.ok(summaryCalls>0);const last=observations.filter(x=>x.body.model==='gpt-6.1-sol').at(-1).body;assert.ok(last.messages.some(x=>x.content==='LATEST_USER_QUESTION'));assert.equal(Object.hasOwn(last,'reasoning_effort'),false,'Adaptive survives compression and provider wrapper');assert.equal((await dbGet(db,"SELECT count(*) AS n FROM chat_model_turns WHERE model_id='gpt-6.1-sol' AND status='completed'")).n,2);
+   const compressed=await chat('gpt-6.2-sol',{messages:history,reasoningProfile:'auto'});assert.ok(compressed.events.some(x=>x.type==='context_compressed'),compressed.raw.slice(-4000)+'\n'+logs.slice(-18000));assert.ok(compressed.events.some(x=>x.type==='done'&&!x.degraded),compressed.raw.slice(-3000));assert.ok(summaryCalls>0);const last=observations.filter(x=>x.body.model==='gpt-6.2-sol').at(-1).body;assert.ok(last.messages.some(x=>x.content==='LATEST_USER_QUESTION'));assert.equal(Object.hasOwn(last,'reasoning_effort'),false,'Adaptive survives compression and provider wrapper');assert.equal((await dbGet(db,"SELECT count(*) AS n FROM chat_model_turns WHERE model_id='gpt-6.1-sol' AND status='completed'")).n,2);
    // Actual provider ID is terminal metadata and SQLite history, not the selection alias.
    const user=await dbGet(db,'SELECT id FROM users LIMIT 1'),provenanceChat='provenance-'+crypto.randomBytes(12).toString('hex');
    await dbRun(db,'INSERT INTO sessions (id,user_id,title,model) VALUES (?,?,?,?)',[provenanceChat,user.id,'Provenance fixture','auto']);
@@ -160,9 +165,9 @@ async function main(){
    const smartBody=observations.filter(x=>x.body.model==='gpt-6-luna'&&x.body.stream).at(-1).body;
    assert.equal((officialLuna?smartBody.reasoning.effort:smartBody.reasoning_effort),'none','Smart without explicit effort uses administrator thinking-off default');
    assert.equal((await dbGet(db,"SELECT model FROM messages WHERE session_id=? AND role='assistant' ORDER BY id DESC LIMIT 1",[provenanceChat])).model,'gpt-6-luna');
-   mode='failure';const failed=await chat('gpt-6.1-sol');assert.ok(failed.events.some(x=>x.type==='error'),failed.raw.slice(-3000));assert.equal((await dbGet(db,"SELECT count(*) AS n FROM chat_model_turns WHERE model_id='gpt-6.1-sol' AND status='completed'")).n,2);mode='answer';
+   mode='failure';const failed=await chat('gpt-6.2-sol');assert.ok(failed.events.some(x=>x.type==='error'),failed.raw.slice(-3000));assert.equal((await dbGet(db,"SELECT count(*) AS n FROM chat_model_turns WHERE model_id='gpt-6.1-sol' AND status='completed'")).n,2);mode='answer';
    // The failed upstream trips its circuit: user still selects Sol, actual answer uses DeepSeek.
-   const rerouted=await chat('gpt-6.1-sol',{sessionId:provenanceChat,thinkingMode:false});
+   const rerouted=await chat('gpt-6.2-sol',{sessionId:provenanceChat,thinkingMode:false});
    const terminalModel=rerouted.events.find(x=>x.type==='done')?.actualModel;
    assert.equal(terminalModel,dsModel,rerouted.raw.slice(-2000));
    assert.equal((await dbGet(db,"SELECT model FROM messages WHERE session_id=? AND role='assistant' ORDER BY id DESC LIMIT 1",[provenanceChat])).model,terminalModel,'history must preserve rerouted upstream ID, not selected Sol');
@@ -200,6 +205,13 @@ async function main(){
    const adminLogin=await login.json();assert.equal(login.status,200,JSON.stringify(adminLogin));
    async function admin(route,method='GET',body,status=200){const response=await fetch(baseUrl+'/api/admin/'+route,{method,headers:{'Content-Type':'application/json',Authorization:'Bearer '+adminLogin.token},body:body===undefined?undefined:JSON.stringify(body)});const result=await response.json();assert.equal(response.status,status,JSON.stringify(result));return result;}
    assert.equal((await admin('verify')).success,true);
+   for(const [retired,current] of [['gpt-6.1-sol','gpt-6.2-sol'],['gpt-6-astra','gpt-6.2-astra']]){
+    await dbRun(db,'INSERT INTO model_visibility(model_id,enabled) VALUES (?,0) ON CONFLICT(model_id) DO UPDATE SET enabled=0',[retired]);
+    assert.equal((await admin('models')).models.find(model=>model.id===current).enabled,false);
+    await admin('models/'+current,'PUT',{enabled:true});
+    assert.equal((await (await fetch(baseUrl+'/api/models/availability')).json()).models.find(model=>model.id===current).enabled,true);
+    assert.equal((await dbGet(db,'SELECT enabled FROM model_visibility WHERE model_id=?',[retired])).enabled,1);
+   }
    assert.ok([401,403].includes((await fetch(baseUrl+'/api/admin/token-usage',{headers})).status),'ordinary user session cannot inspect provider usage');
    const measured=await admin('token-usage');assert.equal(measured.official.limit,250000);assert.equal(measured.official.safetyMargin,10000);
    assert.ok(measured.daily.some(row=>row.input_tokens>0),'real provider counters are persisted');
@@ -227,7 +239,7 @@ async function main(){
    const available=await(await fetch(baseUrl+'/api/models/availability')).json();assert.equal(available.smartDefaults.model,custom.id);assert.equal(available.smartDefaults.reasoningProfile,'xhigh');assert.equal(available.contextPolicies[custom.id].compressionThreshold,258000);assert.equal(available.contextTokensEstimated,true);assert.equal(available.uploadFileNameMaxCharacters,255);assert.equal(available.conversationQuota.limits.free[custom.id],2);
    assert.ok(!JSON.stringify(available).includes('apiKey'));assert.deepEqual(available.models.find(x=>x.id==='deepseek-v4.1-flash').thinkingProfiles,['auto','high','max']);
    await admin('models','POST',{...custom,thinkingProfiles:['none']},400);
-   await admin('models','POST',{...custom,id:'gpt-6.1-sol'},400);
+   await admin('models','POST',{...custom,id:'gpt-6.2-sol'},400);
    await admin('models/'+custom.id,'PUT',{enabled:false});const fallback=await(await fetch(baseUrl+'/api/models/availability')).json();assert.notEqual(fallback.smartDefaults.model,custom.id);
    await admin('models/'+custom.id,'PUT',{enabled:true});
    await admin('models','POST',{...custom,vision:false,limits:{free:4,pro:6,max:12},pointCost:2},201);
@@ -238,7 +250,7 @@ async function main(){
    await dbRun(db,"CREATE TRIGGER fail_catalog_delete BEFORE DELETE ON model_visibility WHEN OLD.model_id='custom-runtime-test' BEGIN SELECT RAISE(ABORT,'test rollback'); END");
    await admin('models/'+custom.id,'DELETE',undefined,500);await dbRun(db,'DROP TRIGGER fail_catalog_delete');assert.ok((await admin('models')).models.some(m=>m.id===custom.id));assert.ok(await dbGet(db,'SELECT model_id FROM admin_model_catalog WHERE model_id=?',[custom.id]));
    await admin('models/'+custom.id,'DELETE');assert.ok(!(await admin('models')).models.some(m=>m.id===custom.id));assert.equal((await admin('runtime-settings')).settings.smart_default_model,'gpt-6-luna');
-   await admin('models/gpt-6.1-sol','DELETE',undefined,400);
+   await admin('models/gpt-6.2-sol','DELETE',undefined,400);
    const longName='中'.repeat(252)+'.txt';assert.equal([...longName].length,256);
    const preflight=await fetch(baseUrl+'/api/uploads/sessions',{method:'POST',headers,body:JSON.stringify({fileName:longName,mimeType:'text/plain',size:2})});assert.equal(preflight.status,400);assert.equal((await preflight.json()).code,'FILE_NAME_TOO_LONG');
    const validName='中文'.repeat(100)+'.txt';
@@ -248,7 +260,7 @@ async function main(){
    const progress=await(await fetch(baseUrl+'/api/uploads/'+session.uploadId+'/status',{headers})).json();assert.equal(progress.errorCode,'FILE_NAME_TOO_LONG');assert.equal(progress.status,'failed');
    const chinese=new FormData();chinese.append('file',new Blob(['ok'],{type:'text/plain'}),validName);const uploaded=await fetch(baseUrl+'/api/upload',{method:'POST',headers:{Authorization:'Bearer '+token},body:chinese});assert.equal(uploaded.status,200);assert.equal((await uploaded.json()).file.originalName,validName);
    await fetch(baseUrl+'/api/user/config',{method:'PUT',headers,body:JSON.stringify({default_model:'gpt-6-astra',reasoning_profile:'xhigh'})});
-   await fetch(baseUrl+'/api/user/config',{method:'PUT',headers,body:JSON.stringify({theme:'light'})});const profile=await(await fetch(baseUrl+'/api/user/profile',{headers})).json();assert.equal(profile.default_model,'gpt-6-astra');assert.equal(profile.reasoning_profile,'xhigh');
+   await fetch(baseUrl+'/api/user/config',{method:'PUT',headers,body:JSON.stringify({theme:'light'})});const profile=await(await fetch(baseUrl+'/api/user/profile',{headers})).json();assert.equal(profile.default_model,'gpt-6.2-astra');assert.equal(profile.reasoning_profile,'xhigh');
    await admin('logout','POST');await admin('verify','GET',undefined,403);
    console.log('chat-model-runtime PASS: authenticated free account, 3 completed Astra turns then 429, zero points, Sol minimum effort and retired Luna migration, native DeepSeek vision, failure release, real long-context summarization, independent model allowances');
   }finally{await closeDatabase(db);}

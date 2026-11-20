@@ -8,7 +8,7 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 const encode = value => new TextEncoder().encode(value);
 const sse = delta => 'data: '+JSON.stringify({ choices: [{ delta }] })+'\n\n';
 const primaryUrl = 'https://primary.test/v1/chat/completions', fallbackUrl = 'https://fast.test/v1/chat/completions';
-const options = (thinking = true, signal) => ({ signal, raiThinkingMode: thinking, headers: { Authorization: 'Bearer fast-fixture' }, body: JSON.stringify({ model: 'gpt-6.1-sol', stream: true, reasoning_effort: 'low', messages: [{ role: 'user', content: 'fixture' }] }) });
+const options = (thinking = true, signal) => ({ signal, raiThinkingMode: thinking, headers: { Authorization: 'Bearer fast-fixture' }, body: JSON.stringify({ model: 'gpt-6.2-sol', stream: true, reasoning_effort: 'low', messages: [{ role: 'user', content: 'fixture' }] }) });
 
 async function main() {
     for (const preamble of [': keepalive\n\n',sse({role:'assistant'}),sse({content:' '}),'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n',sse({tool_calls:[{index:0,function:{name:'read_file'}}]})]) {
@@ -56,13 +56,13 @@ async function main() {
     }
     // Observe raw headers before awaitFirstResponse, keep attempt IDs, and preserve provenance.
     let clock=0;const latency=createChatLatencyTrace({}, {write(){}}, {now:()=>clock});const call=latency.nextCall();
-    const observed=async(url,opts)=>fetchWithLatency(async()=>{clock=3;return new Response(new ReadableStream({async start(c){await delay(10);clock=40;c.enqueue(encode(sse({content:'answer'})));c.close();}}));},url,opts,latency,{model:'gpt-6.1-sol',provider:'gpt_mirrorium',streaming:true,call});
+    const observed=async(url,opts)=>fetchWithLatency(async()=>{clock=3;return new Response(new ReadableStream({async start(c){await delay(10);clock=40;c.enqueue(encode(sse({content:'answer'})));c.close();}}));},url,opts,latency,{model:'gpt-6.2-sol',provider:'gpt_mirrorium',streaming:true,call});
     const primary=createGptPrimaryFetch({primaryUrl,primaryKey:'primary-fixture',fallbackUrl,fetchImpl:observed,fallbackFetch:async()=>{throw Error('must not retry');}});
     const success=await primary(fallbackUrl,options());assert.equal(success.raiProvider,'mirrorium');await success.text();
     const summary=latency.finish(false);assert.equal(summary.attempts[0].headers,3);assert.equal(summary.attempts[0].first_content,40);
     const provenance=new Response(sse({content:'official'}));Object.defineProperty(provenance,'raiOfficialFallback',{value:true});Object.defineProperty(provenance,'raiProvider',{value:'deepseek_official'});
     const retained=await fetchWithLatency(async()=>provenance,'x',{},createChatLatencyTrace({}, {write(){}}),{streaming:true});assert.equal(retained.raiOfficialFallback,true);assert.equal(retained.raiProvider,'deepseek_official');await retained.text();
-    let count=0;const fast=createDeepSeekProviderFetch({primaryUrl:fallbackUrl,primaryKey:'fixture',officialUrl:'https://official.test',officialKey:'fixture2',primaryModels:['gpt-6.1-sol'],fetchImpl:async()=>++count===1?new Response('down',{status:502}):new Response(sse({content:'official'}))});
+    let count=0;const fast=createDeepSeekProviderFetch({primaryUrl:fallbackUrl,primaryKey:'fixture',officialUrl:'https://official.test',officialKey:'fixture2',primaryModels:['gpt-6.2-sol'],fetchImpl:async()=>++count===1?new Response('down',{status:502}):new Response(sse({content:'official'}))});
     const chain=createGptPrimaryFetch({primaryUrl,primaryKey:'fixture',fallbackUrl,fetchImpl:async()=>new Response('down',{status:502}),fallbackFetch:fast});
     const chainResult=await chain(fallbackUrl,options());assert.equal(chainResult.raiOfficialFallback,true);assert.equal(chainResult.raiMirroriumFallback,true);assert.equal(chainResult.raiProvider,'deepseek_official');
 
@@ -78,7 +78,7 @@ async function main() {
             fetchImpl: async (url, request) => {
                 assert.equal(url, primaryUrl);
                 const sent = JSON.parse(request.body);
-                assert.equal(sent.model, 'gpt-6.1-sol');
+                assert.equal(sent.model, 'gpt-6.2-sol');
                 assert.deepEqual(sent.messages.filter(message => message.role === 'tool'), completedBody.messages.slice(-1));
                 assert.equal(sent.messages.filter(message => message.tool_calls).length, 1);
                 if (++primaryCalls > 1) return new Response(sse({ content: 'Original Sol continued.' }) + 'data: [DONE]\n\n');
