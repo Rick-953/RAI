@@ -5,6 +5,10 @@ const options = { provider: 'openai_official', model: 'gpt-6-luna', cacheTtl: '1
 const usage = { input_tokens: 12000, output_tokens: 50, input_tokens_details: { cached_tokens: 4000,
     cache_write_tokens: 7000, cache_write_tokens_details: { ttl_30m_tokens: 5000, ttl_12h_tokens: 2000 } } };
 const mixed = normalize(usage, options);
+for (const [retired, current] of [['gpt-6.1-sol', 'gpt-6.2-sol'], ['gpt-6-astra', 'gpt-6.2-astra']]) {
+    assert.ok(normalize(usage, { ...options, model: retired }).estimatedUsd > 0);
+    assert.equal(normalize(usage, { ...options, model: current }).estimatedUsd, null, 'a new model does not inherit an unverified historical rate');
+}
 assert.equal(mixed.inputTokens, 12000);
 assert.equal(mixed.uncachedInputTokens, 1000, 'reads and writes are disjoint input billing buckets');
 assert.equal(mixed.cacheHitRate, 1 / 3);

@@ -120,7 +120,7 @@ async function main() {
         for (const native of [false, true]) {
             requestedModel = 'gpt-image-2.5-flare'; await wallet(199); const before = imageCalls;
             const previousResults = toolResults.length;
-            const response = await chat('gpt-6.1-sol', native);
+            const response = await chat('gpt-6.2-sol', native);
             assert.equal(imageCalls, before); assert.equal(await balance(), 199);
             assert.ok(toolResults.length > previousResults, 'AI did not receive image tool result: ' + response.raw + '\n' + logs.slice(-3000));
             const failure = toolResults.at(-1); assert.equal(failure.code, 'insufficient_points');
@@ -128,7 +128,7 @@ async function main() {
             assert.match(failure.display_instruction, /insufficient points/); assert.match(response.raw, /点数不足/);
         }
         await wallet(300); requestedModel = 'gpt-image-2.5-sunburst';
-        const named = await chat('gpt-6.1-sol', true);
+        const named = await chat('gpt-6.2-sol', true);
         assert.equal(await balance(), 0); assert.match(named.raw, /蓝色圆形/);
         const generated = toolResults.at(-1).images[0];
         assert.equal(generated.name, '蓝色圆形'); assert.equal(generated.width, 512); assert.equal(generated.height, 512);
@@ -143,7 +143,7 @@ async function main() {
             await run(db, 'INSERT INTO file_uploads (filename,user_id,original_name,mime_type,size) VALUES (?,?,?,?,?)', [filename, user.lastID, 'reference.png', 'image/png', png.length]);
         }
         requestedSize = '2048x2048'; requestedModel = 'gpt-image-2.6'; await wallet(500);
-        const edited = await chat('gpt-6.1-sol', false, { sessionId, messages: [{ role: 'user', content: 'Generate a 2K image using both reference images', attachments: referenceIds.map(fileId => ({ type: 'image', fileId, filename: fileId, fileName: 'reference.png', fileType: 'image/png', mimeType: 'image/png' })) }] });
+        const edited = await chat('gpt-6.2-sol', false, { sessionId, messages: [{ role: 'user', content: 'Generate a 2K image using both reference images', attachments: referenceIds.map(fileId => ({ type: 'image', fileId, filename: fileId, fileName: 'reference.png', fileType: 'image/png', mimeType: 'image/png' })) }] });
         assert.equal(editCalls, 1, edited.raw + logs.slice(-1500)); assert.equal(await balance(), 400);
         const editedImage = toolResults.at(-1).images[0]; assert.equal(editedImage.width, 2048); assert.equal(editedImage.height, 2048);
         const storedEdit = await sharp(path.join(ROOT, 'uploads/generated-images', editedImage.filename)).metadata(); assert.equal(storedEdit.width, 2048);

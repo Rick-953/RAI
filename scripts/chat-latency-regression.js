@@ -10,7 +10,7 @@ async function main() {
     const originalWrite = response.write;
     const req = { diagnosticRequestId: 'ad42670e-dd7b-431f-a2af-e61d2fa7d1e1', headers: { 'x-rai-client-request-id': canary }, method: 'POST', route: { path: '/api/chat/stream' } };
     const latency = createChatLatencyTrace(req, response, { now: () => clock });
-    latency.setRoute({ model: 'gpt-6-astra', provider: 'gpt_fast', profile: 'low', thinking: false, content: canary });
+    latency.setRoute({ model: 'gpt-6.2-astra', provider: 'gpt_fast', profile: 'low', thinking: false, content: canary });
     clock = 4; latency.mark('authenticated'); latency.mark(canary);
     clock = 6; latency.mark('route_resolved'); latency.mark('prompt_ready');
     const call = latency.nextCall();
@@ -21,7 +21,7 @@ async function main() {
     }, cancel(reason) { cancelled = reason; } });
     clock = 8;
     const wrapped = await fetchWithLatency(async () => new Response(source, { status: 200 }), 'https://private.invalid/'+canary,
-        { headers: { Authorization: canary }, body: canary }, latency, { model: 'gpt-6-astra', provider: 'gpt_fast', streaming: true, call });
+        { headers: { Authorization: canary }, body: canary }, latency, { model: 'gpt-6.2-astra', provider: 'gpt_fast', streaming: true, call });
     const reader = wrapped.body.getReader();
     clock = 20; firstRelease();
     const first = await reader.read();
@@ -42,7 +42,7 @@ async function main() {
     const summary = latency.finish(false);
     assert.equal(latency.finish(false), null, 'one event per request');
     assert.equal(response.write, originalWrite);
-    assert.equal(summary.model, 'gpt-6-astra');
+    assert.equal(summary.model, 'gpt-6.2-astra');
     assert.equal(summary.stages.first_reasoning_write, 21);
     assert.equal(summary.stages.first_content_write, 71);
     assert.equal(summary.attempts[0].headers, 8);

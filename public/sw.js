@@ -1,4 +1,4 @@
-const RAI_SW_VERSION = '0.13.55-20261120-card-choices';
+const RAI_SW_VERSION = '0.13.56-20261120-models62';
 const RAI_SCOPE_PATH = new URL(self.registration.scope).pathname.replace(/\/+$/, '') || '';
 const RAI_SCOPE_KEY = RAI_SCOPE_PATH ? RAI_SCOPE_PATH.slice(1).replace(/[^a-z0-9]+/gi, '-') : 'root';
 const RAI_STATIC_CACHE_PREFIX = `rai-static-${RAI_SCOPE_KEY}-`;
@@ -13,29 +13,29 @@ const RAI_AVATAR_CACHE_NAME = `${RAI_AVATAR_CACHE_PREFIX}${RAI_SW_VERSION}`;
 const RAI_NAVIGATION_FALLBACK = appPath('index.html');
 const RAI_AVATAR_CACHE_MAX_ENTRIES = 80;
 const RAI_STATIC_ASSETS = [
-  'interactive-visual-schema.js?v=20261120-card-choices', 'interactive-controls.js?v=20261120-card-choices',
-  'interactive-visuals.js?v=20261120-card-choices', 'interactive-visuals.css?v=20261120-card-choices',
-  'message-details.js?v=20261120-card-choices', 'message-details.css?v=20261120-card-choices',
-  'decision-workbench.js?v=20261120-card-choices', 'decision-workbench.css?v=20261120-card-choices',
-  'locale.js?v=20261120-card-choices',
-  'web-skills.js?v=20261120-card-choices', 'web-skills.css?v=20261120-card-choices',
-  'third-party-notices.js?v=20261120-card-choices', 'third-party-notices.css?v=20261120-card-choices',
+  'interactive-visual-schema.js?v=20261120-models62', 'interactive-controls.js?v=20261120-models62',
+  'interactive-visuals.js?v=20261120-models62', 'interactive-visuals.css?v=20261120-models62',
+  'message-details.js?v=20261120-models62', 'message-details.css?v=20261120-models62',
+  'decision-workbench.js?v=20261120-models62', 'decision-workbench.css?v=20261120-models62',
+  'locale.js?v=20261120-models62',
+  'web-skills.js?v=20261120-models62', 'web-skills.css?v=20261120-models62',
+  'third-party-notices.js?v=20261120-models62', 'third-party-notices.css?v=20261120-models62',
   'third-party-notices.html', 'third-party-notices.js', 'third-party-notices.css', 'locale.js', 'licenses/manifest.json',
-  '', 'index.html', 'runtime-brand.js?v=20261120-card-choices',
-  'rai-system-prompt.js?v=20261120-card-choices', 'event-bindings.js?v=20261120-card-choices',
-  'conversation-cache.js?v=20261120-card-choices',
-  'lib/jsQR.js?v=20261120-card-choices', 'qr-scanner.js?v=20261120-card-choices',
-  'secure-sharing.js?v=20261120-card-choices', 'secure-sharing.css?v=20261120-card-choices',
-  'diagnostics.js?v=20261120-card-choices',
-  'user-activity.js?v=20261120-card-choices',
-  'token-billing.js?v=20261120-card-choices',
-  'app.js?v=20261120-card-choices', 'styles.css?v=20261120-card-choices',
-  'markdown-tables.js?v=20261120-card-choices',
-  'cx-remote.js?v=20261120-card-choices', 'local-agent.css?v=20261120-card-choices',
-  'crf-ui.js?v=20261120-card-choices',
-  'selection-explainer.js?v=20261120-card-choices', 'selection-explainer.css?v=20261120-card-choices',
-  'site.webmanifest?v=20261120-card-choices', 'icons/source-search.svg', 'icons/rai-app-icon.svg',
-  'pet-quotes.js?v=20261120-card-choices',
+  '', 'index.html', 'runtime-brand.js?v=20261120-models62',
+  'rai-system-prompt.js?v=20261120-models62', 'event-bindings.js?v=20261120-models62',
+  'conversation-cache.js?v=20261120-models62',
+  'lib/jsQR.js?v=20261120-models62', 'qr-scanner.js?v=20261120-models62',
+  'secure-sharing.js?v=20261120-models62', 'secure-sharing.css?v=20261120-models62',
+  'diagnostics.js?v=20261120-models62',
+  'user-activity.js?v=20261120-models62',
+  'token-billing.js?v=20261120-models62',
+  'app.js?v=20261120-models62', 'styles.css?v=20261120-models62',
+  'markdown-tables.js?v=20261120-models62',
+  'cx-remote.js?v=20261120-models62', 'local-agent.css?v=20261120-models62',
+  'crf-ui.js?v=20261120-models62',
+  'selection-explainer.js?v=20261120-models62', 'selection-explainer.css?v=20261120-models62',
+  'site.webmanifest?v=20261120-models62', 'icons/source-search.svg', 'icons/rai-app-icon.svg',
+  'pet-quotes.js?v=20261120-models62',
   'images/pets/MasterTea1.webp', 'images/pets/MasterTea1-1.webp',
   'images/pets/MasterTea2.webp', 'images/pets/MasterTea2-1.webp',
   'images/pets/MasterTea3.webp', 'images/pets/MasterTea3-1.webp',
@@ -45,11 +45,11 @@ const RAI_STATIC_ASSETS = [
   'images/pets/MasterTeaDesktop.webp', 'images/pets/MasterTeaDesktop-1.webp',
   'icons/rai-app-icon-192.png', 'icons/rai-app-icon-512.png', 'images/onboarding-saturn.png',
   'icons/settings/notifications.svg', 'icons/settings/notifications_paused.svg', 'icons/settings/security.svg',
-  'lib/marked.min.js?v=20261120-card-choices', 'lib/purify.min.js?v=20261120-card-choices',
-  'lib/katex/katex.min.css?v=20261120-card-choices', 'lib/katex/katex.min.js?v=20261120-card-choices',
-  'lib/katex/contrib/auto-render.min.js?v=20261120-card-choices',
-  'lib/highlight/styles/github-dark.min.css?v=20261120-card-choices',
-  'lib/highlight/highlight.min.js?v=20261120-card-choices'
+  'lib/marked.min.js?v=20261120-models62', 'lib/purify.min.js?v=20261120-models62',
+  'lib/katex/katex.min.css?v=20261120-models62', 'lib/katex/katex.min.js?v=20261120-models62',
+  'lib/katex/contrib/auto-render.min.js?v=20261120-models62',
+  'lib/highlight/styles/github-dark.min.css?v=20261120-models62',
+  'lib/highlight/highlight.min.js?v=20261120-models62'
 ].map(appPath);
 
 function isAvatarRequest(url) {

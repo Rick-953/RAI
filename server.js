@@ -1,6 +1,6 @@
 const { MESSAGE: FILE_NAME_TOO_LONG_MESSAGE, validateUploadFilename, isFileNameTooLong } = require('./lib/upload-filename');
 const { normalizeAdminModelDefinition, validateReasoningProfile } = require('./lib/admin-model-catalog');
-const { registerChatModel, removeChatModel } = require('./lib/chat-model-policy');
+const { registerChatModel, removeChatModel, chatModelStorageId } = require('./lib/chat-model-policy');
 const { applyChatReasoningPolicy, officialDeepSeekBody } = require('./lib/chat-reasoning-policy');
 const { enforceContextWindow, estimateContextTokens, CONTEXT_WINDOW_TOKENS, CONTEXT_POLICIES, contextPolicyForModel, TOOL_TRUNCATION_MESSAGE, toolResultForContext, truncateToolResult } = require('./lib/context-window');
 const { AsyncLocalStorage } = require('node:async_hooks');
@@ -1212,8 +1212,8 @@ const ADMIN_MODEL_CATALOG = [...CHAT_MODEL_CATALOG];
 const PUBLIC_MODEL_IDS = ADMIN_MODEL_CATALOG.map((model) => model.id);
 const DEFAULT_DISABLED_MODEL_IDS = DEFAULT_DISABLED_MODEL_IDS_RAW.filter((modelId) => PUBLIC_MODEL_IDS.includes(modelId));
 const AUTO_MODEL_PREFERENCE = ['deepseek-v4.1-flash'];
-const AUTO_MULTIMODAL_MODEL_PREFERENCE = ['gpt-6.1-sol', 'gpt-6-astra'];
-const AUDIO_UNDERSTANDING_MODEL_PREFERENCE = ['gpt-6.1-sol', 'gpt-6-astra'];
+const AUTO_MULTIMODAL_MODEL_PREFERENCE = ['gpt-6.2-sol', 'gpt-6.2-astra'];
+const AUDIO_UNDERSTANDING_MODEL_PREFERENCE = ['gpt-6.2-sol', 'gpt-6.2-astra'];
 const MODEL_DISABLED_CACHE_TTL_MS = 10 * 1000;
 let modelAvailabilityCache = { loadedAt: 0, disabled: new Set() };
 
@@ -6187,9 +6187,9 @@ async function callK2p5Stream({
 
 function researchModelLabel(modelId = '') {
     const labels = {
-        'gpt-6.1-sol': 'GPT-6.1 Sol',
+        'gpt-6.2-sol': 'GPT 6.2 Sol',
         'gpt-5.6-terra': 'GPT 6',
-        'gpt-6-astra': 'GPT 6 Astra',
+        'gpt-6.2-astra': 'GPT 6.2 Astra',
         'gemma': 'Gemma',
         'qwen3.6-35b-a3b': 'Qwen 3.6 35B',
         'kimi-k2.6': 'Kimi K2.6',
@@ -6206,9 +6206,9 @@ function researchModelLabel(modelId = '') {
 }
 
 function researchRoleFromModel(modelId = '') {
-    if (modelId === 'gpt-6.1-sol') return 'gpt_sol';
+    if (modelId === 'gpt-6.2-sol') return 'gpt_sol';
     if (modelId === 'gpt-5.6-terra') return 'gpt_terra';
-    if (modelId === 'gpt-6-astra') return 'gpt_astra';
+    if (modelId === 'gpt-6.2-astra') return 'gpt_astra';
     if (modelId === 'gemma') return 'gemma';
     if (modelId === 'qwen3.6-35b-a3b') return 'qwen';
     if (modelId === 'kimi-k2.6') return 'kimi';
@@ -8681,11 +8681,13 @@ logApiKeyReadiness();
 
 const LEGACY_MODEL_ALIASES = {
     // Normalize retired model IDs while keeping stored sessions and old clients readable.
-    'gpt-5.6': 'gpt-6.1-sol',
+    'gpt-5.6': 'gpt-6.2-sol',
     'gpt-image-2': 'gpt-image-2.5',
     'kolors-free': 'gpt-image-2.5',
-    'gpt-5.6-sol': 'gpt-6.1-sol',
-    'gpt-6-sol': 'gpt-6.1-sol',
+    'gpt-5.6-sol': 'gpt-6.2-sol',
+    'gpt-6-sol': 'gpt-6.2-sol',
+    'gpt-6.1-sol': 'gpt-6.2-sol',
+    'gpt-6-astra': 'gpt-6.2-astra',
     'gpt-5.6-terra': 'deepseek-v4.1-flash',
     'gpt-5.6-luna': 'gpt-6-luna',
     'claude-opus-5': 'claude-sonnet-5',
@@ -8747,9 +8749,9 @@ const MODEL_ROUTING = {
         multimodal: true
     },
     'gpt-6-luna': { provider: 'rai_luna_gateway', model: 'gpt-6-luna', contextWindow: 272000, compressionThreshold: 258000, supportsThinking: true, supportsWebSearch: true, multimodal: true, thinkingProfiles: ['auto','low','medium','high','xhigh','max'], canDisableThinking: true },
-    'gpt-6.1-sol': {
+    'gpt-6.2-sol': {
         provider: 'rai_gpt_gateway',
-        model: 'gpt-6.1-sol',
+        model: 'gpt-6.2-sol',
         contextWindow: 272000, compressionThreshold: 258000,
         supportsThinking: true,
         supportsWebSearch: true,
@@ -8762,9 +8764,9 @@ const MODEL_ROUTING = {
         supportsWebSearch: true,
         multimodal: true
     },
-    'gpt-6-astra': {
+    'gpt-6.2-astra': {
         provider: 'rai_gpt_gateway',
-        model: 'gpt-6-astra',
+        model: 'gpt-6.2-astra',
         contextWindow: 272000, compressionThreshold: 258000,
         supportsThinking: true,
         supportsWebSearch: true,
@@ -8785,7 +8787,7 @@ const MODEL_ROUTING = {
         multimodal: true
     },
     ...Object.fromEntries(Object.keys(IMAGE_MODEL_COSTS).map(id => [id, {
-        provider: 'rai_gpt_gateway', model: 'gpt-6.1-sol', supportsThinking: false,
+        provider: 'rai_gpt_gateway', model: 'gpt-6.2-sol', supportsThinking: false,
         supportsWebSearch: false, multimodal: true, imageOnly: true
     }])),
     // Qwen 3.6 35B - 便宜多模态模型
@@ -10850,7 +10852,7 @@ const ADMIN_RUNTIME_LIMIT_DEFAULTS = Object.freeze({
     smart_reasoning_profile: 'none',
     fast_default_model: 'gpt-6-luna',
     fast_reasoning_profile: 'none',
-    thinking_default_model: 'gpt-6.1-sol',
+    thinking_default_model: 'gpt-6.2-sol',
     thinking_reasoning_profile: 'auto',
     vision_fallback_model: 'deepseek-v4.1-flash',
     selection_explanation_model: SELECTION_EXPLANATION_MODEL_ID
@@ -22316,9 +22318,9 @@ if (clientFileExecution && systemPrompt) {
         //  关键修复：添加白名单验证（防御性编程）
         const VALID_MODELS = [
             'deepseek-v4.1-flash',
-            'gpt-6.1-sol',
+            'gpt-6.2-sol',
             'gpt-5.6-terra',
-            'gpt-6-astra',
+            'gpt-6.2-astra',
             'claude-sonnet-5',
             'gemini-3.6-flash-low',
             ...Object.keys(IMAGE_MODEL_COSTS),
@@ -28382,7 +28384,7 @@ function isRuntimeConfiguredModel(modelId = '') {
 async function resolveConfiguredDefault(prefix, requiresVision = false) {
     const settings = await getAdminRuntimeSettings();
     const preferred = settings[prefix + '_default_model'];
-    const candidates = [preferred, 'gpt-6.1-sol', 'deepseek-v4.1-flash', ...PUBLIC_MODEL_IDS];
+    const candidates = [preferred, 'gpt-6.2-sol', 'deepseek-v4.1-flash', ...PUBLIC_MODEL_IDS];
     for (const id of [...new Set(candidates)]) {
         const definition = ADMIN_MODEL_CATALOG.find(item => item.id === id);
         if (definition && (!requiresVision || definition.vision) && !(await isPublicModelDisabled(id)) && isRuntimeConfiguredModel(id)) return id;
@@ -29373,7 +29375,7 @@ function isFreeModelIdentifier(modelUsed = '') {
 
 const MODEL_POINT_COSTS = Object.freeze({
     'deepseek-v4.1-flash': 1,
-    'gpt-6.1-sol': 5,
+    'gpt-6.2-sol': 5,
     'gpt-5.6-terra': 5,
     'claude-sonnet-5': 10,
     'gemini-3.6-flash-low': 3,
@@ -29719,7 +29721,7 @@ app.put('/api/admin/models/:modelId', authenticateAdmin, async (req, res) => {
             ON CONFLICT(model_id) DO UPDATE SET
                 enabled = excluded.enabled,
                 updated_at = CURRENT_TIMESTAMP
-        `, [modelId, enabled ? 1 : 0]);
+        `, [chatModelStorageId(modelId), enabled ? 1 : 0]);
         modelAvailabilityCache.loadedAt = 0;
 
         const models = await getModelVisibilityPayload({ forceRefresh: true });

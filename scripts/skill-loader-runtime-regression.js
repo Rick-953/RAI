@@ -369,7 +369,7 @@ function createProviderMock() {
         return;
       }
 
-      if (scenario === 'fallback' && body.model === 'gpt-6.1-sol') {
+      if (scenario === 'fallback' && body.model === 'gpt-6.2-sol') {
         response.writeHead(503, { 'Content-Type': 'application/json' });
         response.end(JSON.stringify({ error: 'forced primary failure' }));
         return;
@@ -560,7 +560,7 @@ async function runClientChat(baseUrl, token, softwareKey, selected, scenario, se
   }[scenario] || '';
   const response = await fetch(`${baseUrl}/api/chat/stream`, {
     method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'X-RAI-Client-Key': softwareKey },
-    body: JSON.stringify({ messages: [{ role: 'user', content: `scenario:${scenario} ${userContent}` }], model: 'gpt-6.1-sol',
+    body: JSON.stringify({ messages: [{ role: 'user', content: `scenario:${scenario} ${userContent}` }], model: 'gpt-6.2-sol',
       internetMode: false, memoryMode: 'off', client_file_execution: true, workdir_configured: officeScenario,
       ...(sessionId ? { sessionId } : {}),
       client_skills: { protocol: 1, catalog: [{ name: 'documents', description: 'Word' }, { name: 'custom-workflow', description: 'Custom workflow' }], selected },
@@ -727,7 +727,7 @@ async function runInterjection(baseUrl, token, softwareKey, databasePath, provid
     await dbRun(db, 'INSERT INTO sessions (id,user_id,title) SELECT ?,id,? FROM users LIMIT 1', [sessionId, 'Interjection fixture']);
     const response = await fetch(`${baseUrl}/api/chat/stream`, { method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'X-RAI-Client-Key': softwareKey },
-      body: JSON.stringify({ sessionId, messages: [{ role: 'user', content: 'scenario:client-interjection' }], model: 'gpt-6.1-sol', internetMode: false, memoryMode: 'off', client_file_execution: true }) });
+      body: JSON.stringify({ sessionId, messages: [{ role: 'user', content: 'scenario:client-interjection' }], model: 'gpt-6.2-sol', internetMode: false, memoryMode: 'off', client_file_execution: true }) });
     assert.equal(response.status, 200);
     const requestId = response.headers.get('X-Request-ID'); assert.ok(requestId);
     const correction = await fetch(`${baseUrl}/api/chat/interject`, { method: 'POST',
@@ -780,7 +780,7 @@ async function runMemoryBatches(baseUrl, token, databasePath, provider) {
 
   provider.memoryFixtures.items = Array.from({ length: 500 }, (_, index) => ({ category: 'work', content: `Tool project ${index}`,
     evidence: `Please remember durable project ${index}.`, reason: 'This project is relevant across future conversations.' }));
-  await runChat(baseUrl, token, { scenario: 'memory-batch-save', model: 'gpt-6.1-sol',
+  await runChat(baseUrl, token, { scenario: 'memory-batch-save', model: 'gpt-6.2-sol',
     userText: provider.memoryFixtures.items.map(item => item.evidence).join('\n') });
   const modelSaved = await api('');
   assert.equal(modelSaved.total, 500);
@@ -794,7 +794,7 @@ async function runMemoryBatches(baseUrl, token, databasePath, provider) {
   assert.equal(second.memories.length, 500);
   assert.equal(second.hasMore, false);
   assert.equal(new Set([...first.memories, ...second.memories].map(memory => memory.id)).size, 1000);
-  await runChat(baseUrl, token, { scenario: 'memory-batch-delete', model: 'gpt-6.1-sol',
+  await runChat(baseUrl, token, { scenario: 'memory-batch-delete', model: 'gpt-6.2-sol',
     userText: 'Please delete only these saved memory IDs: ' + provider.memoryFixtures.ids.join(',') });
   assert.equal((await api('')).total, 500);
   const cleared = await api('/clear', {});
@@ -897,7 +897,7 @@ async function main() {
       const limitDb = await openDatabase(databasePath);
       try {
         const userId = Number(JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString()).sub);
-        await dbRun(limitDb, 'INSERT INTO sessions (id,user_id,title,model) VALUES (?,?,?,?)', [limitSession,userId,'Context limit fixture','gpt-6.1-sol']);
+        await dbRun(limitDb, 'INSERT INTO sessions (id,user_id,title,model) VALUES (?,?,?,?)', [limitSession,userId,'Context limit fixture','gpt-6.2-sol']);
         await runClientChat(baseUrl, token, softwareKey, [], 'client-context-limit', limitSession);
         const row = await new Promise((resolve,reject)=>limitDb.get("SELECT content,process_trace FROM messages WHERE session_id=? AND role='assistant'", [limitSession], (error,value)=>error?reject(error):resolve(value)));
         assert.match(row.content, /Runtime skill loop passed/);
@@ -932,16 +932,16 @@ async function main() {
       return;
     }
     for (const entry of settingsOnly ? [] : [
-      ['sol','gpt-6.1-sol'], ['astra','gpt-6-astra'], ['deepseek','deepseek-v4.1-flash'],
-      ['astra','gpt-6-astra'], ['fallback','gpt-6.1-sol'],
-      ['limits','gpt-6.1-sol'], ['invalid','gpt-6.1-sol']
+      ['sol','gpt-6.2-sol'], ['astra','gpt-6.2-astra'], ['deepseek','deepseek-v4.1-flash'],
+      ['astra','gpt-6.2-astra'], ['fallback','gpt-6.2-sol'],
+      ['limits','gpt-6.2-sol'], ['invalid','gpt-6.2-sol']
     ]) {
       await runChat(baseUrl, token, { scenario: entry[0], model: entry[1] });
     }
     if (!settingsOnly) {
-      await runChat(baseUrl, token, { scenario: 'retry-primary', model: 'gpt-6.1-sol' });
+      await runChat(baseUrl, token, { scenario: 'retry-primary', model: 'gpt-6.2-sol' });
       await runClientChat(baseUrl, token, softwareKey, [], 'client-rounds-retry');
-      await runChat(baseUrl, token, { scenario: 'memory-off', model: 'gpt-6.1-sol', memoryMode: 'off' });
+      await runChat(baseUrl, token, { scenario: 'memory-off', model: 'gpt-6.2-sol', memoryMode: 'off' });
       await runClientChat(baseUrl, token, softwareKey, [], 'client-unused');
       await runClientChat(baseUrl, token, softwareKey, [{ success: true, name: 'documents', offset: 0, total_chars: 24,
         content: 'CLIENT_SKILL_BODY_MARKER', complete: true, next_offset: null }], 'client-selected');
@@ -962,9 +962,9 @@ async function main() {
       'runtime fallback did not reach the configured secondary provider');
     assert.ok(provider.observations.some((item) => (
       ['limits', 'invalid', 'memory-off'].includes(item.scenario)
-        && item.body?.model === 'gpt-6.1-sol'
+        && item.body?.model === 'gpt-6.2-sol'
     )), 'successful direct official failover must not poison subsequent primary tool requests');
-    console.log('skill loader runtime regression passed (GPT-6.1 Sol/Luna/DeepSeek V4.1 Flash/Astra/official fallback)');
+    console.log('skill loader runtime regression passed (GPT 6.2 Sol/Luna/DeepSeek V4.1 Flash/Astra/official fallback)');
   } catch (error) {
     throw new Error(`${error.stack || error.message}\n--- runtime log tail ---\n${logs.value}`);
   } finally {

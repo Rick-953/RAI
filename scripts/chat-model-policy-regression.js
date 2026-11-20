@@ -10,9 +10,9 @@ const { applyChatReasoningPolicy } = require('../lib/chat-reasoning-policy');
 const { createDeepSeekProviderFetch } = require('../lib/deepseek-provider-fallback');
 const { toResponsesBody } = require('../lib/luna-official-provider');
 async function main() {
-    assert.deepEqual(CHAT_MODEL_IDS, ['deepseek-v4.1-flash','gpt-6.1-sol','gpt-6-luna','gpt-6-astra']);
+    assert.deepEqual(CHAT_MODEL_IDS, ['deepseek-v4.1-flash','gpt-6.2-sol','gpt-6-luna','gpt-6.2-astra']);
     assert.deepEqual(require('../lib/chat-model-policy').CHAT_MODEL_CATALOG.map(x => x.thinkingProfiles), [['auto','high','max'], ['auto','low','medium','high','xhigh','max'], ['auto','low','medium','high','xhigh','max'], ['auto','low','medium','high','xhigh','max']]);
-    assert.deepEqual(Object.values(CHAT_MODEL_LIMITS).map(x => [x['gpt-6-astra'],x['gpt-6.1-sol'],x['gpt-6-luna']]), [[3,50,100],[50,100,200],[80,200,500]]);
+    assert.deepEqual(Object.values(CHAT_MODEL_LIMITS).map(x => [x['gpt-6.2-astra'],x['gpt-6.2-sol'],x['gpt-6-luna']]), [[3,50,100],[50,100,200],[80,200,500]]);
     const db = await new Promise((resolve,reject) => { const connection = new sqlite3.Database(':memory:', e => e ? reject(e) : resolve(connection)); });
     const run = (sql, params=[]) => new Promise((resolve,reject) => db.run(sql, params, function(e){e?reject(e):resolve({changes:this.changes})}));
     const get = (sql, params=[]) => new Promise((resolve,reject) => db.get(sql, params, (e,row)=>e?reject(e):resolve(row)));
@@ -24,21 +24,21 @@ async function main() {
     await run("INSERT INTO users VALUES (1,'free',NULL),(2,'pro',?),(3,'max',?),(4,'max',?)", [new Date(clock+1e9).toISOString(),new Date(clock+1e9).toISOString(),new Date(clock-1).toISOString()]);
     assert.equal(activeTier({membership:'max',membership_end:new Date(clock-1).toISOString()},clock),'free');
     assert.equal(await quota.reserve(1,'ds','deepseek-v4.1-flash'), null);
-    let reservation = await quota.reserve(1,'cancel','gpt-6-astra');assert.equal(reservation.remaining,2);
+    let reservation = await quota.reserve(1,'cancel','gpt-6.2-astra');assert.equal(reservation.remaining,2);
     await quota.settle(1,'cancel',[]);assert.equal((await get("SELECT count(*) AS n FROM chat_model_turns WHERE status='completed'")).n,0);
-    const concurrent = await Promise.allSettled(Array.from({length:6},(_,i)=>quota.reserve(1,'parallel-'+i,'gpt-6-astra')));
+    const concurrent = await Promise.allSettled(Array.from({length:6},(_,i)=>quota.reserve(1,'parallel-'+i,'gpt-6.2-astra')));
     assert.equal(concurrent.filter(r=>r.status==='fulfilled').length,3,'concurrent reservations cannot overrun cap');
     assert.equal(concurrent.filter(r=>r.status==='rejected' && r.reason.code==='model_chat_quota_exceeded').length,3);
-    await quota.settle(1,'parallel-0',['gpt-6-astra']);await quota.settle(1,'parallel-0',['gpt-6-astra']);
+    await quota.settle(1,'parallel-0',['gpt-6.2-astra']);await quota.settle(1,'parallel-0',['gpt-6.2-astra']);
     assert.equal((await get("SELECT count(*) AS n FROM chat_model_turns WHERE status='completed'")).n,1,'completion idempotency');
-    clock+=16*60*1000;await quota.reserve(1,'after-crash','gpt-6-astra');await quota.settle(1,'after-crash',[]);
-    clock+=CHAT_MODEL_WINDOW_MS;const reset=await quota.reserve(1,'after-window','gpt-6-astra');assert.equal(reset.remaining,2,'exact rolling boundary releases completed turn');await quota.settle(1,'after-window',[]);
+    clock+=16*60*1000;await quota.reserve(1,'after-crash','gpt-6.2-astra');await quota.settle(1,'after-crash',[]);
+    clock+=CHAT_MODEL_WINDOW_MS;const reset=await quota.reserve(1,'after-window','gpt-6.2-astra');assert.equal(reset.remaining,2,'exact rolling boundary releases completed turn');await quota.settle(1,'after-window',[]);
     for(const [user,tier] of [[2,'pro'],[3,'max'],[4,'free']]){
-        const row=await quota.reserve(user,'membership','gpt-6.1-sol');assert.equal(row.limit,CHAT_MODEL_LIMITS[tier]['gpt-6.1-sol']);await quota.settle(user,'membership',[]);
+        const row=await quota.reserve(user,'membership','gpt-6.2-sol');assert.equal(row.limit,CHAT_MODEL_LIMITS[tier]['gpt-6.2-sol']);await quota.settle(user,'membership',[]);
     }
     // At most one count per GPT used in a successful research turn, regardless of tool loops.
-    for(const id of ['gpt-6.1-sol','gpt-6-astra']){await quota.reserve(2,'research',id);await quota.reserve(2,'research',id);}
-    await quota.settle(2,'research',['gpt-6.1-sol','gpt-6-astra','gpt-6-astra']);
+    for(const id of ['gpt-6.2-sol','gpt-6.2-astra']){await quota.reserve(2,'research',id);await quota.reserve(2,'research',id);}
+    await quota.settle(2,'research',['gpt-6.2-sol','gpt-6.2-astra','gpt-6.2-astra']);
     assert.equal((await get("SELECT count(*) AS n FROM chat_model_turns WHERE request_id='research' AND status='completed'")).n,2);
     await new Promise((resolve,reject)=>db.close(e=>e?reject(e):resolve()));
     for(const id of CHAT_MODEL_IDS){
@@ -55,7 +55,7 @@ async function main() {
         assert.equal(off.reasoning_effort,id.startsWith('gpt')?'low':undefined);
         if(id.startsWith('deepseek'))assert.equal(off.thinking.type,'disabled');
     }
-    let softSkipped=0; const softBody={model:'gpt-6.1-sol',max_tokens:2000,messages:[{role:'user',content:'x'.repeat(258000)}]};
+    let softSkipped=0; const softBody={model:'gpt-6.2-sol',max_tokens:2000,messages:[{role:'user',content:'x'.repeat(258000)}]};
     const softResult=await enforceContextWindow(softBody,{summarize:async()=>{throw Object.assign(new Error('test'),{code:'context_compression_failed'});},onDiagnostic:event=>{assert.equal(event.estimated,true);softSkipped++;}});
     assert.equal(softResult,softBody,'compression threshold is soft while hard output/context reserve remains available');assert.equal(softSkipped,1);
     let counts = 0;
@@ -70,7 +70,7 @@ async function main() {
     await assert.rejects(enforceContextWindow(byteHeavyBody,{countTokens:async()=>{unavailableCounts++;return null;},summarize:async()=>''}),e=>e.code==='current_turn_context_too_large',
         'unavailable token counting preserves the existing conservative boundary');
     assert.equal(unavailableCounts,1,'a failed count is not retried for later candidates in the same compression');
-    const original = { model:'gpt-6-astra',max_tokens:8000,messages:[{role:'system',content:'SYSTEM_INTACT'},...Array.from({length:22},(_,i)=>({role:i%2?'assistant':'user',content:'history-'+i+' '+ '中'.repeat(8000)})),{role:'user',content:'LATEST_QUESTION'},{role:'assistant',content:null,tool_calls:[{id:'tool_1',type:'function',function:{name:'read_file',arguments:'{}'}}]},{role:'tool',tool_call_id:'tool_1',content:'LATEST_TOOL_RESULT'}]};
+    const original = { model:'gpt-6.2-astra',max_tokens:8000,messages:[{role:'system',content:'SYSTEM_INTACT'},...Array.from({length:22},(_,i)=>({role:i%2?'assistant':'user',content:'history-'+i+' '+ '中'.repeat(8000)})),{role:'user',content:'LATEST_QUESTION'},{role:'assistant',content:null,tool_calls:[{id:'tool_1',type:'function',function:{name:'read_file',arguments:'{}'}}]},{role:'tool',tool_call_id:'tool_1',content:'LATEST_TOOL_RESULT'}]};
     for (const policy of Object.values(CONTEXT_POLICIES)) {
         const thresholdBody = {...original,max_tokens:2000};
         const thresholdInput = policy.compressionThreshold;
@@ -229,14 +229,14 @@ async function main() {
     calls=[];const cancel=new AbortController();cancel.abort();await assert.rejects(provider('https://fast.test/v1/chat/completions',{signal:cancel.signal,body:JSON.stringify({model:'deepseek-v4.1-flash'})}));assert.equal(calls.length,0);
     // HTTP headers / keepalive are not a model response. Sol timeout goes DIRECTLY official.
     let timeoutCalls=[];
-    const timeoutProvider=createDeepSeekProviderFetch({primaryUrl:'https://fast.test/v1/chat/completions',primaryKey:'sol-test',primaryModels:['gpt-6.1-sol'],officialUrl:'https://official.test/v1/chat/completions',officialKey:'official-test',primaryTimeoutMs:25,fetchImpl:async(url,options)=>{
+    const timeoutProvider=createDeepSeekProviderFetch({primaryUrl:'https://fast.test/v1/chat/completions',primaryKey:'sol-test',primaryModels:['gpt-6.2-sol'],officialUrl:'https://official.test/v1/chat/completions',officialKey:'official-test',primaryTimeoutMs:25,fetchImpl:async(url,options)=>{
         timeoutCalls.push({url,options});
         return url.includes('fast.test') ? new Response(new ReadableStream({start(c){c.enqueue(new TextEncoder().encode(': keepalive\n\n'));}}),{headers:{'Content-Type':'text/event-stream'}}) : new Response('data: {"choices":[{"delta":{"content":"official answer"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n');
     }});
-    const timeoutResponse=await timeoutProvider('https://fast.test/v1/chat/completions',{raiThinkingMode:false,body:JSON.stringify({model:'gpt-6.1-sol',stream:true,reasoning_effort:'low',messages:[{role:'user',content:'tiny prompt'}]})});
+    const timeoutResponse=await timeoutProvider('https://fast.test/v1/chat/completions',{raiThinkingMode:false,body:JSON.stringify({model:'gpt-6.2-sol',stream:true,reasoning_effort:'low',messages:[{role:'user',content:'tiny prompt'}]})});
     assert.equal(timeoutCalls.length,2);assert.equal(timeoutResponse.raiOfficialFallback,true);assert.equal(JSON.parse(timeoutCalls[1].options.body).thinking.type,'disabled');assert.match(await timeoutResponse.text(),/official answer/);
     timeoutCalls=[];
-    const adaptiveFallback=await timeoutProvider('https://fast.test/v1/chat/completions',{raiThinkingMode:true,body:JSON.stringify({model:'gpt-6.1-sol',stream:true,messages:[{role:'user',content:'tiny adaptive prompt'}]})});
+    const adaptiveFallback=await timeoutProvider('https://fast.test/v1/chat/completions',{raiThinkingMode:true,body:JSON.stringify({model:'gpt-6.2-sol',stream:true,messages:[{role:'user',content:'tiny adaptive prompt'}]})});
     assert.equal(adaptiveFallback.raiOfficialFallback,true);
     assert.equal(JSON.parse(timeoutCalls[1].options.body).thinking.type,'enabled');
     assert.equal(Object.hasOwn(JSON.parse(timeoutCalls[1].options.body),'reasoning_effort'),false,'Adaptive fallback remains model-managed');
