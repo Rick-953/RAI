@@ -20,6 +20,7 @@ const { createChatStreamUsage, requestChatStreamUsage } = require('./lib/chat-st
 const { installSecureSharingRoutes } = require('./lib/secure-sharing-routes');
 const { installPhotoWidgetRoutes } = require('./lib/photo-widget-routes');
 const { installDecisionWorkbenchRoutes } = require('./lib/decision-workbench-routes');
+const { messageChoicesSql } = require('./lib/decision-workbench');
 const { buildInteractiveVisualPrompt, appendInteractiveVisualState } = require('./lib/interactive-visual-prompt');
 const { createCustomApiSyncHandler, clientMessageFields } = require('./lib/custom-api-sync');
 const { writeIncompleteAnswer, partialStreamWarning } = require('./lib/chat-stream-fallback');
@@ -16463,7 +16464,7 @@ app.get('/api/sessions/:id/messages', authenticateToken, (req, res) => {
         // 只返回轻量附件元数据；不把历史 Base64 附件正文放进消息列表。
         db.all(
             `SELECT id, session_id, role, content, request_id, reasoning_content, model, attachments,
-                    enable_search, thinking_mode, internet_mode, sources, process_trace, client_metadata, created_at,
+                    enable_search, thinking_mode, internet_mode, sources, process_trace, client_metadata, created_at, ${messageChoicesSql},
                     CASE WHEN attachments IS NOT NULL AND attachments != '' AND attachments != '[]'
                          THEN 1 ELSE 0 END as has_attachments
              FROM messages WHERE session_id = ? ORDER BY json_extract(client_metadata, '$.client_order') ASC, created_at ASC, id ASC`,
@@ -16487,6 +16488,7 @@ app.get('/api/sessions/:id/messages', authenticateToken, (req, res) => {
                     return {
                         ...message,
                         ...clientFields,
+                        decision_choices: JSON.parse(message.decision_choices || '{}'),
                         content: message.role === 'user' && attachment_refs.length > 0
                             ? stripInjectedAttachmentPromptContext(message.content)
                             : message.content,
@@ -22018,7 +22020,7 @@ if (clientFileExecution && systemPrompt) {
 
                     console.log('\n 启用真并行 Multi-Agent 模式 (K2.6)\n');
                     const agentUserMessage = req.body?.interactiveVisuals === true
-                        ? appendInteractiveVisualState([{ role: 'user', content: userContent }], req.body.interactiveVisualState)[0].content
+                        ? appendInteractiveVisualState([{ role: 'user', content: userContent }], req.body.interactiveVisualState, req.body.interactiveVisualSummary)[0].content
                         : userContent;
                     const agentResult = await runTrueParallelAgentMode({
                         res,
@@ -22630,7 +22632,7 @@ if (clientFileExecution && systemPrompt) {
         // 构建消息数组
         let finalMessages = [...messages];
         if (req.body?.interactiveVisuals === true) {
-            finalMessages = appendInteractiveVisualState(finalMessages, req.body.interactiveVisualState);
+            finalMessages = appendInteractiveVisualState(finalMessages, req.body.interactiveVisualState, req.body.interactiveVisualSummary);
         }
 
         // 如果是多模态请求，转换消息格式为Omni格式

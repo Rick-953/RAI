@@ -126,16 +126,15 @@
     heading.append(title, element('span', 'rai-visual-kind', kind));
     root.appendChild(heading);
     const note = original.type === 'budget'
-      ? t('计划值不代表真实报价。调整仅在本地生效，确认后填写草稿。', 'Planned amounts are not verified quotes. Changes stay local; confirmation fills a draft.')
+      ? t('计划值不代表实际报价。', 'Planned amounts are not verified quotes.')
       : original.type === 'comparison'
         ? t('各项使用同一单位，互不相加。点击项目可填写针对它的追问草稿。', 'All items use the same unit and are not added together. Click an item to draft a focused question.')
-        : t('勾选仅记录本地状态，不代表已核实完成。确认后填写草稿。', 'Checks record local status, not verified completion. Confirmation fills a draft.');
+        : t('勾选不代表已核实完成。', 'Checks do not verify completion.');
     root.appendChild(element('p', 'rai-visual-note', note));
     const formatter = new Intl.NumberFormat(english ? 'en-US' : 'zh-CN', {
       maximumFractionDigits: original.type === 'budget' ? schema.limits.budgetDecimals : schema.limits.comparisonDecimals
     });
     const amount = value => formatter.format(value) + ' ' + original.unit;
-    const quoted = value => JSON.stringify(value);
     const checkedLabel = value => value ? t('已勾选', 'checked') : t('未勾选', 'unchecked');
     const restored = schema.validate(options.current);
     const initial = restored && restored.type === original.type && restored.title === original.title
@@ -281,7 +280,7 @@
         : applyFailed ? t('未能填写草稿，请重试。', 'The draft could not be filled. Please try again.') : '';
       status.textContent = !onApply ? t('本地交互；宿主尚未连接草稿入口。', 'Local interaction; the host has not connected a draft input.')
         : dirty ? t('已修改 · 未用于后续', 'Modified · not yet used in a follow-up')
-          : appliedSnapshot !== null ? t('已填写草稿 · 尚未发送', 'Draft filled · not sent')
+          : appliedSnapshot !== null ? (options.followUpChoices ? t('已选好，下一条提问会带上这些条件。', 'Your next question will include these choices.') : t('已填写草稿 · 尚未发送', 'Draft filled · not sent'))
             : t('本地交互 · 不会自动发送', 'Local interaction · never sent automatically');
       if (applyButton) applyButton.disabled = !onApply || invalid;
       if (resetButton) resetButton.disabled = state === initialSnapshot && !invalid;
@@ -303,47 +302,11 @@
       }
     }
 
-    function itemLines(values) {
-      return original.items.map((item, index) => (index + 1) + '. ' + quoted(item.label) + ': '
-        + (original.type === 'checklist' ? checkedLabel(values[index]) : amount(values[index]))).join('\n');
-    }
-
     function followUp(index) {
-      const source = t('来源标题：', 'Source title: ') + quoted(original.title);
       if (original.type === 'comparison') {
-        return source + '\n' + t('请针对第 ', 'Please focus on item ') + (index + 1) + ': '
-          + quoted(original.items[index].label) + ' (' + amount(current[index]) + ')'
-          + t(' 继续分析差异与取舍。各项是同一度量的独立选项，请勿相加；区分事实与假设。\n原始对比参数：\n',
-            '. Explain differences and trade-offs. These are independent options on one metric; do not sum them. Distinguish facts from assumptions.\nOriginal comparison parameters:\n')
-          + itemLines(current);
+        return t('请分析', 'Compare ') + original.items[index].label + ' (' + amount(current[index]) + ')';
       }
-      const before = original.items.map(item => original.type === 'checklist' ? item.checked : item.value);
-      const changes = [];
-      if (original.type === 'budget' && budget !== original.budget) {
-        changes.push(t('总预算：', 'Budget: ') + amount(original.budget) + ' → ' + amount(budget));
-      }
-      original.items.forEach((item, itemIndex) => {
-        if (before[itemIndex] !== current[itemIndex]) {
-          const format = original.type === 'checklist' ? checkedLabel : amount;
-          changes.push((itemIndex + 1) + '. ' + quoted(item.label) + ': ' + format(before[itemIndex]) + ' → ' + format(current[itemIndex]));
-        }
-      });
-      const lines = [source, original.type === 'budget'
-        ? t('请用以下本地预算试算继续讨论；计划值不代表真实报价。', 'Continue with this local budget scenario; planned amounts are not verified quotes.')
-        : t('请按以下本地清单状态继续讨论；勾选不代表已核实完成。', 'Continue with this local checklist status; checks do not establish verified completion.'),
-      t('变更（相对初始数据）：', 'Changes from the original:'),
-      changes.join('\n') || t('无变更。', 'No changes.'),
-      t('初始参数：', 'Original parameters:')];
-      if (original.type === 'budget') lines.push(t('总预算：', 'Budget: ') + amount(original.budget));
-      lines.push(itemLines(before), t('当前参数：', 'Current parameters:'));
-      if (original.type === 'budget') lines.push(t('总预算：', 'Budget: ') + amount(budget));
-      lines.push(itemLines(current));
-      if (original.type === 'budget') {
-        const totals = schema.calculateBudget(budget, current);
-        lines.push(t('计划合计：', 'Planned total: ') + amount(totals.total) + t('；', '; ')
-          + (totals.overspend ? t('超出预算：', 'Over budget: ') : t('预算结余：', 'Remaining: ')) + amount(totals.overspend || totals.remaining));
-      } else lines.push(t('勾选进度：', 'Checked progress: ') + current.filter(Boolean).length + '/' + current.length);
-      return lines.join('\n');
+      return t('请按当前条件继续：', 'Continue with my choices: ') + original.title;
     }
 
     function onInput(event) {

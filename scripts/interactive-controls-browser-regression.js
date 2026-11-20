@@ -273,10 +273,10 @@ async function run() {
       await page.locator('button[type=submit]').click();
       await page.waitForFunction(() => drafts.length === 1 && card.element.dataset.state === 'draft');
       const draft = await page.evaluate(() => drafts[0]);
-      assert.deepEqual(JSON.parse(draft.slice(draft.indexOf('{'))), await state(), 'draft contains exact validated current values');
+      assert.equal(draft, spec.submitLabel, 'visible draft contains only the selected action');
       await field('review').getByRole('button').click();
       await page.waitForFunction(() => drafts.length === 2);
-      assert.ok((await page.evaluate(() => drafts[1])).includes('"Review choices"'), 'button reports its intent, not an arbitrary action');
+      assert.equal(await page.evaluate(() => drafts[1]), 'Review choices', 'button reports its intent, not an arbitrary action');
       assert.equal(await page.evaluate(() => changes.every(value => !!RAIInteractiveVisualSchema.validate(value))), true);
       const edited = await state();
       assert.deepEqual(await page.evaluate(() => source), spec, 'renderer never mutates original model data');

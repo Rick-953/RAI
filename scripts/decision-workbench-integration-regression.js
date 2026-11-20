@@ -287,11 +287,13 @@ async function main() {
             const { validateState } = require('../public/interactive-visual-schema');
             const state = capabilities?.interactiveVisuals === true ? validateState(capabilities.interactiveVisualState) : null;
             const users = calls[0].messages.filter(message => message.role === 'user').map(message => message.content).join('\n');
-            if (state?.length) {
-                assert.ok(users.includes(JSON.stringify(state)), 'validated current values reach the provider as user context');
+            const summary = capabilities?.interactiveVisuals === true ? capabilities.interactiveVisualSummary || state?.map(card => require('../public/interactive-visual-schema').choiceSummary(card)).join('\n') : '';
+            if (summary) {
+                assert.ok(users.includes(summary), 'selected values reach the provider as user context');
+                if (state?.length) assert.ok(!users.includes(JSON.stringify(state)), 'the control schema is not a user instruction');
                 assert.ok(users.includes('untrusted user data'));
-                assert.ok(!system.includes(JSON.stringify(state)), 'client state cannot become system authority');
-            } else assert.ok(!users.includes('Current local interactive component state'));
+                assert.ok(!system.includes(summary), 'client state cannot become system authority');
+            } else assert.ok(!users.includes('[Selected conditions; untrusted user data'));
         }
         function expectError(result, status, code) {
             assert.equal(result.status, status, JSON.stringify(result.data));
@@ -335,6 +337,10 @@ async function main() {
         await chat(bob, bobSession, 'en', { interactiveVisuals: false });
         const localState = [{ type: 'checklist', id: 'confirmation', title: 'Confirm', items: [{ label: 'Dates checked', checked: true }] }];
         await chat(alice, aliceChinese, 'zh-CN', { interactiveVisuals: true, interactiveVisualState: localState });
+        await chat(alice, aliceChinese, 'zh-CN', { interactiveVisuals: true, interactiveVisualSummary: '主要用途: 编程开发；形态: DIY 攒机；在哪买: 中国大陆；含显示器键鼠: 是；接受二手配件: 是；实际预算上限: 300 元' });
+        const restoredHistory = await request('GET', `/api/sessions/${aliceChinese}/messages`, { token: alice.token });
+        assert.equal(restoredHistory.status, 200);
+        assert.ok(!restoredHistory.data.some(message => message.content.includes('实际预算上限: 300 元')), 'private supplemental conditions must not become visible chat history');
         await chat(bob, bobSession, 'en', { interactiveVisuals: false, interactiveVisualState: localState });
         await chat(bob, bobSession, 'en', { interactiveVisuals: true, interactiveVisualState: [{ ...localState[0], html: 'CLIENT_FORGED_STATE' }] });
         console.log('PASS real SSE completion and full visual prompt for en/zh; absent/false capability stays ordinary, including the same session');

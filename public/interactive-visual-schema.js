@@ -191,5 +191,37 @@
     return JSON.stringify(result).length <= limits.maxStateLength ? Object.freeze(result) : null;
   }
 
-  return Object.freeze({ limits, validate, parse, validateState, isBudgetAmount, calculateBudget });
+  function choiceFields(spec) {
+    if (spec.type === 'form') return spec.controls.flatMap(control => {
+      const field = ['checked', 'selected', 'value'].find(name => Object.hasOwn(control, name));
+      return field ? [[control, field]] : [];
+    });
+    if (spec.type === 'budget') return [[spec, 'budget'], ...spec.items.map(item => [item, 'value'])];
+    return spec.type === 'checklist' ? spec.items.map(item => [item, 'checked']) : [];
+  }
+
+  const choiceValues = spec => choiceFields(spec).map(([item, field]) => item[field]);
+
+  function restoreChoices(spec, values) {
+    if (!Array.isArray(values)) return null;
+    const copy = JSON.parse(JSON.stringify(spec));
+    const fields = choiceFields(copy);
+    if (!fields.length || values.length !== fields.length) return null;
+    fields.forEach(([item, field], index) => { item[field] = values[index]; });
+    return validate(copy);
+  }
+
+  function choiceSummary(spec, english = false) {
+    const booleanText = value => english ? (value ? 'yes' : 'no') : (value ? '是' : '否');
+    return choiceFields(spec).flatMap(([item, field]) => {
+      let value = item[field];
+      if (value === '') return [];
+      if (item.options) value = item.options.find(option => option.value === value).label;
+      if (typeof value === 'boolean') value = booleanText(value);
+      const unit = item.unit || (spec.type === 'budget' ? spec.unit : '');
+      return [(item.label || (english ? 'Budget' : '总预算')) + ': ' + value + (unit ? ' ' + unit : '')];
+    }).join(english ? '; ' : '；');
+  }
+
+  return Object.freeze({ limits, validate, parse, validateState, isBudgetAmount, calculateBudget, choiceValues, restoreChoices, choiceSummary });
 });

@@ -114,8 +114,8 @@
       status.textContent = changeFailed
         ? t('本地值已更新，但更改回调未完成。', 'Local values changed, but the change callback did not complete.')
         : !onApply ? t('本地交互；尚未连接草稿入口。', 'Local interaction; no draft input is connected.')
-          : busy ? t('正在填写草稿…', 'Filling the draft…')
-            : appliedRevision === revision ? t('已填写草稿 · 尚未发送', 'Draft filled · not sent')
+          : busy ? t('正在确认…', 'Confirming…')
+            : appliedRevision === revision ? (options.followUpChoices ? t('已选好，下一条提问会带上这些条件。', 'Your next question will include these choices.') : t('已确认 · 尚未发送', 'Confirmed · not sent'))
               : revision ? t('已修改 · 不会自动发送', 'Modified · never sent automatically')
                 : t('本地交互 · 不会自动发送', 'Local interaction · never sent automatically');
       root.dataset.state = busy ? 'applying' : appliedRevision === revision ? 'draft' : revision ? 'dirty' : 'initial';
@@ -389,13 +389,7 @@
         return;
       }
       const submittedAt = revision;
-      const payload = handle.getSpec();
-      const text = [
-        buttonLabel
-          ? t('我选择了按钮：', 'I selected the button: ') + JSON.stringify(buttonLabel)
-          : t('请根据当前表单继续讨论：', 'Please continue using the current form: '),
-        JSON.stringify(payload, null, 2)
-      ].join('\n');
+      const text = buttonLabel || original.submitLabel;
       busy = true;
       applyFailed = false;
       refreshStatus();

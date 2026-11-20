@@ -231,8 +231,8 @@ async function browserCases() {
         assert.equal(await page.evaluate(() => drafts.length), 0, 'dragging and input never call the host');
         await apply.click();
         const draft = await page.evaluate(() => drafts[0]);
-        assert.ok(draft.includes('"Travel plan"') && draft.includes('"Transport": 350.25 CNY → 650.51 CNY'));
-        assert.ok(draft.includes('1,000 CNY → 1,000.01 CNY') && draft.includes('"Stay": 500.5 CNY'));
+        assert.ok(draft.includes('Travel plan') && !draft.includes('CNY'));
+        assert.equal((await page.evaluate(() => card.getSpec())).items[0].value,650.51);
         assert.equal(await page.locator('.rai-visual').getAttribute('data-state'), 'draft');
         assert.match(await page.locator('.rai-visual-status').textContent(), english ? /Draft filled.*not sent/ : /已填写草稿.*尚未发送/);
         await reset.click();
@@ -287,8 +287,8 @@ async function browserCases() {
         assert.equal(await page.evaluate(() => drafts.length), 1);
         await apply.click();
         const checkDraft = await page.evaluate(() => drafts.at(-1));
-        assert.ok(checkDraft.includes('"Preparation"') && checkDraft.includes('2/3'));
-        assert.match(checkDraft, language === 'en-US' ? /"Confirm dates": unchecked → checked/ : /"Confirm dates": 未勾选 → 已勾选/);
+        assert.ok(checkDraft.includes('Preparation') && !checkDraft.includes('Confirm dates'));
+        assert.equal((await page.evaluate(() => card.getSpec())).items[0].checked,true);
         await reset.click();
         assert.equal(await page.getByRole('checkbox', { name: 'Confirm dates', exact: true }).isChecked(), false);
         await page.evaluate(() => card.destroy());
@@ -306,7 +306,7 @@ async function browserCases() {
         await page.locator('[data-action="inspect"][data-index="2"]').click();
         assert.equal(await page.evaluate(() => drafts.length), 3);
         const comparisonDraft = await page.evaluate(() => drafts.at(-1));
-        assert.ok(comparisonDraft.includes('"Return change"') && comparisonDraft.includes('"C" (7.25 %)') && comparisonDraft.includes('"A": -3.5 %'));
+        assert.ok(comparisonDraft.includes('C (7.25 %)') && !comparisonDraft.includes('A:'));
         assert.equal(await page.locator('[data-index="2"]').getAttribute('aria-pressed'), 'true');
         await page.evaluate(() => card.destroy());
 

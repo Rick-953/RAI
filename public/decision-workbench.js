@@ -55,7 +55,7 @@
   };
   const icons = {
     sidebar: '<rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16"/>',
-    pin: '<path d="m15 3 6 6-4 1-3 5-1 4-3-3-6 6 6-6-3-3 4-1 5-3z"/>',
+    chevron: '<path d="m14 6-6 6 6 6"/>',
     close: '<path d="m6 6 12 12M18 6 6 18"/>'
   };
   let instance = null;
@@ -82,12 +82,11 @@
     const main = app?.querySelector('.main-content');
     const chat = document.getElementById('chatPanel');
     const sidebar = document.getElementById('sidebar');
-    const composerToolbar = chat?.querySelector('.input-toolbar');
-    if (!app || !main || !chat || !sidebar || !composerToolbar) {
+    if (!app || !main || !chat || !sidebar) {
       throw new Error('Initialize the decision workbench after ensureUnifiedCanvasPlacement.');
     }
     const desktop = matchMedia('(min-width: 769px)');
-    let collapsed = false, sidebarWidth = 260, panelWidth = 368, panelOpen = false;
+    let collapsed = false, sidebarWidth = 260, panelWidth = 368, panelOpen = false, manuallyClosed = false;
     try {
       const saved = JSON.parse(localStorage.getItem(LAYOUT_KEY));
       collapsed = saved?.collapsed === true;
@@ -133,15 +132,6 @@
       return { key, control };
     });
 
-    const openButton = button('toolbar-btn decision-panel-toggle', 'pin');
-    openButton.id = 'decisionPanelToggle';
-    openButton.setAttribute('aria-controls', 'decisionWorkbenchPanel');
-    const mobileCount = element('span', 'decision-mobile-count', '0');
-    mobileCount.setAttribute('aria-hidden', 'true');
-    openButton.appendChild(mobileCount);
-    const canvasButton = document.getElementById('canvasToggleBtn');
-    composerToolbar.insertBefore(openButton, canvasButton?.nextSibling || null);
-
     // Phones render interactive components inline; this workspace is desktop-only.
     const panel = element('dialog', 'decision-workbench-panel');
     panel.id = 'decisionWorkbenchPanel';
@@ -186,6 +176,8 @@
     const autoCards = new Map();
     const visualStates = new Map();
     const stateAliases = new Map();
+    const pendingChoices = new Set();
+    const choiceWrites = new Map();
     let autoVisuals = [], lastVisualSignature = '';
     const adding = new Set();
     const removing = new Set();
@@ -204,6 +196,7 @@
 
     function closePanel() {
       panelOpen = false;
+      manuallyClosed = true;
       const hadFocus = panel.contains(document.activeElement);
       applyLayout();
       if (hadFocus && desktop.matches) openButton.focus({ preventScroll: true });
@@ -239,7 +232,6 @@
       } else if (active && !desktop.matches && (focusWasInRail || focused === collapseButton)) {
         document.querySelector('#mobileHeader .hamburger-btn').focus({ preventScroll: true });
       }
-      labelButton(openButton, t('open'));
       labelButton(closeButton, t('close'));
       chatLabel.textContent = t('chat');
       scopeLabel.textContent = t('scope');
@@ -251,15 +243,13 @@
       panel.inert = !panel.open;
       openButton.setAttribute('aria-expanded', String(panel.open));
       sideResize.hidden = !active || !desktop.matches || railMode;
-      rightResize.hidden = !panel.open;
       updateSeparators();
+      for (const entry of autoCards.values()) placeCard(entry);
     }
 
     function renderStatus() {
       const total = pins.length + autoVisuals.length;
       count.textContent = String(total);
-      mobileCount.textContent = String(total);
-      mobileCount.hidden = !total;
       list.setAttribute('aria-busy', String(loading));
       const message = context?.temporary ? 'temporary'
         : loadFailed ? 'loadFailed'
@@ -278,18 +268,52 @@
     }
 
     const stateKey = (spec, sourceId) => JSON.stringify([sourceId ?? null, spec]);
-    function visualOptions(spec, sourceId = null) {
+    function savedChoices(source, key) {
+      const saved = source?.decision_choices?.[key];
+      return saved && Number(source.id) === saved.source ? saved : null;
+    }
+    function visualOptions(spec, sourceId = null, pinSource = null) {
       const epoch = generation;
       const signature = stateKey(spec, sourceId);
+      const key = window.RAIInteractiveVisuals.keyFor(spec);
+      const schema = window.RAIInteractiveVisualSchema;
+      const source = context?.messages?.find(message => (context.messageKey?.(message) ?? message.id) === sourceId) || pinSource;
+      const restored = schema.restoreChoices(spec, savedChoices(source, key)?.values);
+      function remember(value) {
+        if (!current(epoch)) return;
+        const validated = schema.validate(value);
+        if (!validated) return;
+        const stateId = stateAliases.get(signature) || signature;
+        visualStates.set(stateId, validated);
+        pendingChoices.add(stateId);
+        while (visualStates.size > 128) { const first = visualStates.keys().next().value; visualStates.delete(first); pendingChoices.delete(first); }
+        if (!canSave() || !source) return;
+        const values = schema.choiceValues(validated);
+        if (!values.length) return;
+        const path = basePath() + '/choices';
+        const job = choiceWrites.get(stateId) || { tail: Promise.resolve() };
+        clearTimeout(job.timer);
+        job.flush = () => {
+          clearTimeout(job.timer);
+          job.flush = null;
+          job.tail = job.tail.then(async () => {
+            if (!current(epoch) && !source.id) return;
+            const id = Number(source.id) || await resolveMessageId(source);
+            if (readContext().userId !== contextUser) return;
+            if (!id) throw new Error('Source not synced');
+            await request(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ source_message_id: id, key, values }) });
+          }).catch(() => { if (current(epoch)) notify(language === 'en' ? 'Choices not saved. Confirm to retry.' : '选择尚未保存，请点确认重试。'); });
+          return job.tail;
+        };
+        job.timer = setTimeout(job.flush, 250);
+        choiceWrites.set(stateId, job);
+      }
+      const contextUser = context?.userId;
+      const followUpChoices = schema.choiceValues(spec).length > 0;
       return {
-        language, current: visualStates.get(stateAliases.get(signature) || signature), onApply: text => usePin(epoch, () => stagePrompt(text)),
-        onChange: value => {
-          if (!current(epoch)) return;
-          const validated = window.RAIInteractiveVisualSchema.validate(value);
-          if (!validated) return;
-          visualStates.set(stateAliases.get(signature) || signature, validated);
-          while (visualStates.size > 128) visualStates.delete(visualStates.keys().next().value);
-        }
+        language, followUpChoices, current: visualStates.get(stateAliases.get(signature) || signature) || restored,
+        onApply: text => usePin(epoch, () => followUpChoices ? remember(visualStates.get(stateAliases.get(signature) || signature) || restored || spec) : stagePrompt(text, true)),
+        onChange: remember
       };
     }
 
@@ -297,16 +321,17 @@
       const visuals = window.RAIInteractiveVisuals;
       const present = new Set(desktop.matches ? autoVisuals.map(item => visuals.keyFor(item.spec)) : []);
       for (const [key, entry] of autoCards) {
-        if (!present.has(key)) { entry.handle.destroy(); entry.node.remove(); autoCards.delete(key); }
+        if (!present.has(key)) { entry.handle.destroy(); entry.node.remove(); if (entry.slot) entry.slot.firstElementChild.hidden = false; autoCards.delete(key); }
       }
       if (!desktop.matches) return;
-      autoVisuals.forEach(({ spec, sourceId, sourceKey }, index) => {
+      autoVisuals.forEach(({ spec, sourceId, sourceKey }) => {
         const key = visuals.keyFor(spec);
         const signature = JSON.stringify([language, spec, sourceId, sourceKey]);
         let entry = autoCards.get(key);
         if (!entry || entry.signature !== signature) {
           entry?.handle.destroy();
           entry?.node.remove();
+          if (entry?.slot) entry.slot.firstElementChild.hidden = false;
           const node = element('article', 'decision-pin-card decision-auto-card');
           node.dataset.visualKey = key;
           const host = element('div', 'decision-pin-visual');
@@ -318,11 +343,26 @@
             source.addEventListener('click', () => usePin(generation, () => locateSource(sourceId)));
             node.appendChild(source);
           }
-          entry = { node, handle, signature };
+          const slot = [...chat.querySelectorAll('.message-workspace-slot')].find(item => item.dataset.key === key && item.dataset.source === String(sourceKey));
+          entry = { node, handle, signature, slot, sourceKey };
           autoCards.set(key, entry);
         }
-        if (autoList.children[index] !== entry.node) autoList.insertBefore(entry.node, autoList.children[index] || null);
+        placeCard(entry);
       });
+    }
+
+    function placeCard(entry) {
+      const inline = entry.slot && !panel.open;
+      const target = inline ? entry.slot : autoList;
+      if (entry.slot) entry.slot.firstElementChild.hidden = !!inline;
+      if (entry.node.parentNode !== target) target.appendChild(entry.node);
+    }
+
+    function bindVisualSlot(slot, key, source) {
+      slot.dataset.key = key;
+      slot.dataset.source = String(source);
+      const entry = autoCards.get(key);
+      if (entry && entry.sourceKey === source) { entry.slot = slot; placeCard(entry); }
     }
 
     function syncVisuals() {
@@ -332,7 +372,11 @@
         if (previous && previous.sourceId === null && item.sourceId !== null && JSON.stringify(previous.spec) === JSON.stringify(item.spec)) {
           const from = stateKey(previous.spec, previous.sourceKey), to = stateKey(item.spec, item.sourceKey);
           const saved = visualStates.get(stateAliases.get(from) || from);
-          if (from !== to) stateAliases.set(from, to);
+          if (from !== to) {
+            stateAliases.set(from, to);
+            if (pendingChoices.delete(from)) pendingChoices.add(to);
+            if (choiceWrites.has(from)) { choiceWrites.set(to, choiceWrites.get(from)); choiceWrites.delete(from); }
+          }
           if (saved) visualStates.set(to, saved);
         }
       }
@@ -342,7 +386,7 @@
         return !old || JSON.stringify(old.spec) !== JSON.stringify(item.spec) ||
           (old.sourceKey !== item.sourceKey && !(old.sourceId === null && item.sourceId !== null));
       }));
-      if (changed && next.length) panelOpen = true;
+      if (changed && next.length && !manuallyClosed) panelOpen = true;
       if (!next.length && autoVisuals.length && !pins.length) panelOpen = false;
       autoVisuals = next;
       lastVisualSignature = signature;
@@ -353,6 +397,34 @@
       const state = autoVisuals.map(({ spec, sourceKey }) => visualStates.get(stateKey(spec, sourceKey)) || spec);
       while (state.length && !window.RAIInteractiveVisualSchema.validateState(state)) state.shift();
       return state;
+    }
+
+    async function takeChoiceSummary() {
+      const epoch = generation;
+      const selected = new Map([...pendingChoices].map(id => [id, visualStates.get(id)]));
+      const saves = [];
+      for (const message of [...(context?.messages || []), ...pins.filter(pin => pin.decision_choices).map(pinMessage)]) {
+        if (!Object.values(message.decision_choices || {}).some(saved => saved?.pending)) continue;
+        for (const { spec } of window.RAIInteractiveVisuals.parseBlocks(message.content)) {
+          const saved = savedChoices(message, window.RAIInteractiveVisuals.keyFor(spec));
+          if (!saved?.pending) continue;
+          const id = stateKey(spec, context?.messageKey?.(message) ?? message.id);
+          if (!selected.has(id)) selected.set(id, window.RAIInteractiveVisualSchema.restoreChoices(spec, saved.values));
+          saved.pending = 0;
+        }
+      }
+      for (const id of pendingChoices) {
+        const write = choiceWrites.get(id);
+        if (write) saves.push(write.flush ? write.flush() : write.tail);
+      }
+      pendingChoices.clear();
+      await Promise.all(saves);
+      if (!current(epoch)) throw new Error('Conversation changed');
+      return [...selected.values()].filter(Boolean).map(state => window.RAIInteractiveVisualSchema.choiceSummary(state, language === 'en')).filter(Boolean).join('\n');
+    }
+
+    function pinMessage(pin) {
+      return { id: pin.source_message_id, content: pin.content, role: pin.role, decision_choices: pin.decision_choices };
     }
 
     function openVisual(key) {
@@ -394,12 +466,9 @@
         const host = element('div', 'decision-pin-visual');
         card.appendChild(host);
         try {
-          visuals.mount(host, spec, {
-            language,
-            onApply: text => {
-              if (typeof text === 'string' && text.trim()) usePin(epoch, () => stagePrompt(text));
-            }
-          });
+          const source = context?.messages?.find(message => Number(message.id) === pin.source_message_id) || pinMessage(pin);
+          visuals.mount(host, spec, pin.source_missing || pin.source_changed || pin.role !== 'assistant' ? { language } :
+            visualOptions(spec, context?.messageKey?.(source) ?? source.id, source));
         } catch (_) {
           host.textContent = t('visualFailed');
         }
@@ -412,7 +481,7 @@
       const quote = button('decision-text-button');
       quote.textContent = t('quote');
       quote.addEventListener('click', () => usePin(epoch, () =>
-        stagePrompt(`${t('reference')} #${pin.source_message_id}:\n\n${pin.content}`)));
+        stagePrompt(`${t('reference')} #${pin.source_message_id}:\n\n${plain}`)));
       const remove = button('decision-text-button decision-unpin');
       remove.disabled = removing.has(pin.id);
       remove.textContent = t(remove.disabled ? 'removing' : 'remove');
@@ -455,10 +524,12 @@
       loadFailed = false;
       pins = [];
       cards.clear();
-      for (const entry of autoCards.values()) entry.handle.destroy();
+      for (const entry of autoCards.values()) { entry.handle.destroy(); entry.node.remove(); }
       autoCards.clear();
       autoList.replaceChildren();
       visualStates.clear();
+      pendingChoices.clear();
+      choiceWrites.clear();
       stateAliases.clear();
       autoVisuals = [];
       lastVisualSignature = '';
@@ -468,6 +539,7 @@
       list.replaceChildren();
       scroll.scrollTop = 0;
       closePanel();
+      manuallyClosed = false;
       renderStatus();
     }
 
@@ -614,13 +686,15 @@
     }
 
     function makeSeparator(kind, parent) {
-      const node = element('div', 'decision-resize-handle decision-resize-' + kind);
+      const edge = kind === 'panel';
+      const node = edge ? button('decision-resize-handle decision-resize-panel decision-panel-toggle', 'chevron') : element('div', 'decision-resize-handle decision-resize-sidebar');
       node.tabIndex = 0;
       node.setAttribute('role', 'separator');
       node.setAttribute('aria-orientation', 'vertical');
       node.setAttribute('aria-controls', kind === 'sidebar' ? sidebar.id : panel.id);
       parent.appendChild(node);
       let drag = null;
+      let moved = false;
       const resize = value => {
         if (kind === 'sidebar') sidebarWidth = Math.round(Math.max(200, Math.min(420, app.clientWidth - 400, value)));
         else panelWidth = Math.round(Math.max(260, Math.min(560, app.clientWidth - 464, value)));
@@ -628,19 +702,31 @@
       };
       node.addEventListener('pointerdown', event => {
         if (event.button !== 0) return;
-        event.preventDefault();
+        if (!edge) event.preventDefault();
+        moved = false;
         drag = { x: event.clientX, width: kind === 'sidebar' ? sidebar.getBoundingClientRect().width : panel.getBoundingClientRect().width };
         node.setPointerCapture(event.pointerId);
         app.classList.add('decision-resizing');
       });
       node.addEventListener('pointermove', event => {
-        if (drag) resize(drag.width + (event.clientX - drag.x) * (kind === 'sidebar' ? 1 : -1));
+        if (!drag) return;
+        const delta = event.clientX - drag.x;
+        if (!moved && Math.abs(delta) < 4) return;
+        moved = true;
+        if (edge && !panelOpen && delta >= 0) return;
+        if (edge) { panelOpen = true; node.classList.add('is-dragging'); }
+        resize(drag.width + delta * (edge ? -1 : 1));
       });
-      const end = () => { if (drag) saveLayout(); drag = null; app.classList.remove('decision-resizing'); };
+      const end = () => { if (drag && moved) saveLayout(); drag = null; node.classList.remove('is-dragging'); app.classList.remove('decision-resizing'); };
       node.addEventListener('lostpointercapture', end);
       node.addEventListener('pointerup', event => { if (node.hasPointerCapture(event.pointerId)) node.releasePointerCapture(event.pointerId); });
       node.addEventListener('pointercancel', end);
+      if (edge) node.addEventListener('click', event => {
+        if (event.detail && moved) return;
+        if (panelOpen) closePanel(); else { panelOpen = true; applyLayout(); }
+      });
       node.addEventListener('keydown', event => {
+        if (edge && !panel.open) return;
         const step = event.shiftKey ? 32 : 16;
         const width = kind === 'sidebar' ? sidebarWidth : panelWidth;
         const delta = kind === 'sidebar' ? 1 : -1;
@@ -652,11 +738,12 @@
       return node;
     }
     const sideResize = makeSeparator('sidebar', sidebar);
-    const rightResize = makeSeparator('panel', panel);
+    const openButton = makeSeparator('panel', chat);
+    openButton.id = 'decisionPanelToggle';
     function updateSeparators() {
       for (const [node, min, max, width, label] of [
         [sideResize, 200, Math.min(420, app.clientWidth - 400), Math.min(sidebarWidth, app.clientWidth - 400), language === 'en' ? 'Sidebar width' : '左侧栏宽度'],
-        [rightResize, 260, Math.min(560, app.clientWidth - 464), Math.min(panelWidth, app.clientWidth - 464), language === 'en' ? 'Workspace width' : '固定栏宽度']
+        [openButton, panel.open ? 260 : 0, Math.min(560, app.clientWidth - 464), panel.open ? Math.min(panelWidth, app.clientWidth - 464) : 0, panel.open ? t('close') + ' · ' + (language === 'en' ? 'Drag to resize' : '拖动调整宽度') : t('open')]
       ]) {
         labelButton(node, label);
         node.setAttribute('aria-valuemin', String(min));
@@ -670,11 +757,15 @@
       saveLayout();
       applyLayout();
     });
-    openButton.addEventListener('click', () => {
-      if (!context?.userId || context.canvasOpen || !desktop.matches) return;
-      panelOpen = !panelOpen;
-      applyLayout();
-    });
+    chat.addEventListener('wheel', event => {
+      const table = event.target.closest?.('.message-text .table-wrapper');
+      if (!table || event.ctrlKey || event.shiftKey || event.deltaX || !event.deltaY || !event.cancelable) return;
+      const remaining = table.scrollWidth - table.clientWidth - table.scrollLeft;
+      if (event.deltaY > 0 ? remaining <= 1 : table.scrollLeft <= 1) return;
+      const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? table.clientWidth : 1;
+      table.scrollLeft += event.deltaY * unit;
+      event.preventDefault();
+    }, { passive: false });
     closeButton.addEventListener('click', closePanel);
     panel.addEventListener('cancel', event => {
       event.preventDefault();
@@ -683,7 +774,7 @@
     retryButton.addEventListener('click', () => sync({ refresh: true }));
     desktop.addEventListener('change', () => { renderAutoVisuals(); applyLayout(); });
     window.addEventListener('resize', applyLayout);
-    instance = Object.freeze({ sync, addPin, clear, visualOptions, getVisualState, openVisual });
+    instance = Object.freeze({ sync, addPin, clear, visualOptions, getVisualState, takeChoiceSummary, openVisual, bindVisualSlot });
     sync();
     return instance;
   }
