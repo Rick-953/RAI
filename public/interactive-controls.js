@@ -389,13 +389,7 @@
         return;
       }
       const submittedAt = revision;
-      const payload = handle.getSpec();
-      const text = [
-        buttonLabel
-          ? t('我选择了按钮：', 'I selected the button: ') + JSON.stringify(buttonLabel)
-          : t('请根据当前表单继续讨论：', 'Please continue using the current form: '),
-        JSON.stringify(payload, null, 2)
-      ].join('\n');
+      const text = buttonLabel || original.submitLabel;
       busy = true;
       applyFailed = false;
       refreshStatus();

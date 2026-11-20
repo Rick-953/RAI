@@ -294,7 +294,7 @@ async function desktopChecks(browser) {
     assert.equal(await page.evaluate(() => savedBudgetNode === document.querySelector('.rai-visual-number[data-field="item-0"]')), true);
 
     await page.locator('.rai-visual-button[data-action="apply"]').first().click();
-    assert.ok((await page.locator('#messageInput').inputValue()).includes('512.35'));
+    assert.ok(!(await page.locator('#messageInput').inputValue()).includes('512.35'));
     assert.equal(f.requests.filter(item => item.method !== 'GET').length, 0, 'visual trials only stage drafts');
     await page.locator('.decision-pin-card').first().getByRole('button', { name: '查看原文' }).click();
     assert.deepEqual(await page.evaluate(() => fixture.sources), [10]);

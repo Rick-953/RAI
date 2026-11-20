@@ -2422,8 +2422,8 @@ function getRaiWebBasePath() {
 const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
-const RAI_APP_VERSION = '0.13.54';
-const RAI_BUILD_ID = '20261119-web-cache-audit';
+const RAI_APP_VERSION = '0.13.55';
+const RAI_BUILD_ID = '20261120-card-choices';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -8520,6 +8520,11 @@ function createAttachmentListItem(att = {}) {
 }
 
 const RAI_UPDATE_TIMELINE = [
+  {
+    date: '2026-11-20', version: 'v0.13.55',
+    zh: { summary: '交互卡片记住选择。', details: ['普通会话自动保存选择。确认后只填写简短的提问，下一条消息携带已选条件，不再展示控件 JSON。'] },
+    en: { summary: 'Interactive cards remember your choices.', details: ['Saved conversations restore your selections. The next question includes your selected conditions without showing control JSON in chat.'] }
+  },
   {
     date: '2026-11-19', version: 'v0.13.54',
     zh: { summary: '修复私有缓存与附件下载。', details: ['正式版、Beta 和账号之间的会话缓存独立；退出登录会关闭私人预览。', '一次性文件只在主动下载时读取；离线首页和固定卡片的重试已修复。'] },
@@ -18148,11 +18153,11 @@ function bindAssistantStreamRequestId(response, message, element, { sessionId, g
 
 let decisionWorkbenchController = null;
 
-function stageDecisionPrompt(text) {
+function stageDecisionPrompt(text, preserveDraft = false) {
   const input = document.getElementById('messageInput');
   if (!input || typeof text !== 'string' || !text.trim()) return;
   window.RaiWebSkills?.noteDraftChange?.();
-  input.value = [input.value.trimEnd(), text.trim()].filter(Boolean).join('\n\n');
+  if (!preserveDraft || !input.value.trim()) input.value = [input.value.trimEnd(), text.trim()].filter(Boolean).join('\n\n');
   input.dispatchEvent(new Event('input', { bubbles: true }));
   input.focus();
 }
@@ -21017,7 +21022,7 @@ async function streamAIResponse(messages, aiMsg, options = {}) {
     const canvasFlowId = chatFlowState.isOpen ? await ensureCanvasFlowForSend() : null;
     const streamPayload = {
       interactiveVisuals: true,
-      interactiveVisualState: decisionWorkbenchController?.getVisualState() || [],
+      interactiveVisualSummary: await decisionWorkbenchController?.takeChoiceSummary() || '',
       messages,
       model: getRequestModelIdForCurrentMode(),
       sessionId,
@@ -23434,7 +23439,7 @@ async function sendMessage(message = null, options = {}) {
     appState.pendingDomainMode = null;
     const chatRequestPayload = {
       interactiveVisuals: true,
-      interactiveVisualState: decisionWorkbenchController?.getVisualState() || [],
+      interactiveVisualSummary: await decisionWorkbenchController?.takeChoiceSummary() || '',
       selected_skill_names: selectedSkillNames,
       sessionId: appState.currentSession?.id || null,
       flowId: canvasFlowId,

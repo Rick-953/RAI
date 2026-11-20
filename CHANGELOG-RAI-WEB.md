@@ -1,3 +1,7 @@
+## 0.13.55 - 2026-11-20
+
+- 普通会话的卡片只保存可编辑值；不改原回复，临时会话不写入。确认不再将控件 JSON 塞进输入框，选择作为独立的用户数据随提问传递。
+
 ## 0.13.54 - 2026-11-19
 
 - Isolate private browser caches by API deployment and account. Rebuild the signed-in user's older, unscoped cache from the server; signing out closes private file previews and discards late preview and sync responses.

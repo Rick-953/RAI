@@ -141,7 +141,9 @@ async function main() {
     const amount = () => page.locator('.decision-auto-card .rai-visual-number[data-field="item-0"]');
     await amount().fill('600');
     await page.locator('.decision-auto-card [data-action="apply"]').click();
-    assert.match(await page.locator('#messageInput').inputValue(), /600/);
+    assert.doesNotMatch(await page.locator('#messageInput').inputValue(), /600|\{|\n/);
+    assert.match(await page.evaluate(() => decisionWorkbenchController.takeChoiceSummary()), /600/);
+    assert.equal(await page.evaluate(() => decisionWorkbenchController.takeChoiceSummary()), '');
     assert.equal(requests.some(request => request.path.endsWith('/chat/stream')), false);
     assert.equal(await page.evaluate(() => decisionWorkbenchController.getVisualState()[0].items[0].value), 600);
     assert.equal(await page.evaluate(() => appState.messages[1].content.includes('"value":500')), true);
@@ -202,7 +204,8 @@ async function main() {
     await inline.locator('.rai-visual-number[data-field="item-0"]').fill('625');
     await inline.locator('[data-action="apply"]').scrollIntoViewIfNeeded();
     await inline.locator('[data-action="apply"]').click();
-    assert.match(await page.locator('#messageInput').inputValue(), /625/);
+    assert.doesNotMatch(await page.locator('#messageInput').inputValue(), /625|\{|\n/);
+    assert.match(await page.evaluate(() => decisionWorkbenchController.takeChoiceSummary()), /625/);
     assert.equal(await page.evaluate(() => decisionWorkbenchController.getVisualState()[0].items[0].value), 625);
     await page.locator('#messagesList .message-interactive-visual').first().locator('.rai-visual-number[data-field="item-0"]').fill('900');
     assert.equal(await page.evaluate(() => decisionWorkbenchController.getVisualState()[0].items[0].value), 625,

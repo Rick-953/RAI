@@ -186,6 +186,8 @@
     const autoCards = new Map();
     const visualStates = new Map();
     const stateAliases = new Map();
+    const pendingChoices = new Set();
+    const choiceWrites = new Map();
     let autoVisuals = [], lastVisualSignature = '';
     const adding = new Set();
     const removing = new Set();
@@ -278,18 +280,51 @@
     }
 
     const stateKey = (spec, sourceId) => JSON.stringify([sourceId ?? null, spec]);
+    function savedChoices(source, key) {
+      const saved = source?.decision_choices?.[key];
+      return saved && Number(source.id) === saved.source ? saved : null;
+    }
     function visualOptions(spec, sourceId = null) {
       const epoch = generation;
       const signature = stateKey(spec, sourceId);
+      const key = window.RAIInteractiveVisuals.keyFor(spec);
+      const schema = window.RAIInteractiveVisualSchema;
+      const source = context?.messages?.find(message => (context.messageKey?.(message) ?? message.id) === sourceId);
+      const restored = schema.restoreChoices(spec, savedChoices(source, key)?.values);
+      function remember(value) {
+        if (!current(epoch)) return;
+        const validated = schema.validate(value);
+        if (!validated) return;
+        const stateId = stateAliases.get(signature) || signature;
+        visualStates.set(stateId, validated);
+        pendingChoices.add(stateId);
+        while (visualStates.size > 128) { const first = visualStates.keys().next().value; visualStates.delete(first); pendingChoices.delete(first); }
+        if (!canSave() || !source) return;
+        const values = schema.choiceValues(validated);
+        if (!values.length) return;
+        const path = basePath() + '/choices';
+        const job = choiceWrites.get(stateId) || { tail: Promise.resolve() };
+        clearTimeout(job.timer);
+        job.flush = () => {
+          clearTimeout(job.timer);
+          job.flush = null;
+          job.tail = job.tail.then(async () => {
+            if (!current(epoch) && !source.id) return;
+            const id = Number(source.id) || await resolveMessageId(source);
+            if (readContext().userId !== contextUser) return;
+            if (!id) throw new Error('Source not synced');
+            await request(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ source_message_id: id, key, values }) });
+          }).catch(() => { if (current(epoch)) notify(language === 'en' ? 'Choices not saved. Confirm to retry.' : '选择尚未保存，请点确认重试。'); });
+          return job.tail;
+        };
+        job.timer = setTimeout(job.flush, 250);
+        choiceWrites.set(stateId, job);
+      }
+      const contextUser = context?.userId;
       return {
-        language, current: visualStates.get(stateAliases.get(signature) || signature), onApply: text => usePin(epoch, () => stagePrompt(text)),
-        onChange: value => {
-          if (!current(epoch)) return;
-          const validated = window.RAIInteractiveVisualSchema.validate(value);
-          if (!validated) return;
-          visualStates.set(stateAliases.get(signature) || signature, validated);
-          while (visualStates.size > 128) visualStates.delete(visualStates.keys().next().value);
-        }
+        language, current: visualStates.get(stateAliases.get(signature) || signature) || restored,
+        onApply: text => usePin(epoch, () => { remember(visualStates.get(stateAliases.get(signature) || signature) || restored || spec); return stagePrompt(text, true); }),
+        onChange: remember
       };
     }
 
@@ -353,6 +388,28 @@
       const state = autoVisuals.map(({ spec, sourceKey }) => visualStates.get(stateKey(spec, sourceKey)) || spec);
       while (state.length && !window.RAIInteractiveVisualSchema.validateState(state)) state.shift();
       return state;
+    }
+
+    async function takeChoiceSummary() {
+      const epoch = generation;
+      const summaries = [];
+      const saves = [];
+      for (const { spec, sourceKey } of autoVisuals) {
+        const signature = stateKey(spec, sourceKey);
+        const id = stateAliases.get(signature) || signature;
+        const message = context?.messages?.find(entry => (context.messageKey?.(entry) ?? entry.id) === sourceKey);
+        const saved = savedChoices(message, window.RAIInteractiveVisuals.keyFor(spec));
+        if (pendingChoices.delete(id) || saved?.pending) {
+          const write = choiceWrites.get(id);
+          if (write) saves.push(write.flush ? write.flush() : write.tail);
+          const state = visualStates.get(id) || window.RAIInteractiveVisualSchema.restoreChoices(spec, saved?.values);
+          if (state) summaries.push(window.RAIInteractiveVisualSchema.choiceSummary(state, language === 'en'));
+          if (saved) saved.pending = 0;
+        }
+      }
+      await Promise.all(saves);
+      if (!current(epoch)) throw new Error('Conversation changed');
+      return summaries.filter(Boolean).join('\n');
     }
 
     function openVisual(key) {
@@ -459,6 +516,8 @@
       autoCards.clear();
       autoList.replaceChildren();
       visualStates.clear();
+      pendingChoices.clear();
+      choiceWrites.clear();
       stateAliases.clear();
       autoVisuals = [];
       lastVisualSignature = '';
@@ -683,7 +742,7 @@
     retryButton.addEventListener('click', () => sync({ refresh: true }));
     desktop.addEventListener('change', () => { renderAutoVisuals(); applyLayout(); });
     window.addEventListener('resize', applyLayout);
-    instance = Object.freeze({ sync, addPin, clear, visualOptions, getVisualState, openVisual });
+    instance = Object.freeze({ sync, addPin, clear, visualOptions, getVisualState, takeChoiceSummary, openVisual });
     sync();
     return instance;
   }

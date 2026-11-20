@@ -124,7 +124,7 @@ async function main() {
         await database.dbRunAsync('PRAGMA foreign_keys = ON');
         await database.dbRunAsync('CREATE TABLE users (id INTEGER PRIMARY KEY)');
         await database.dbRunAsync(`CREATE TABLE sessions (
-            id TEXT PRIMARY KEY, user_id INTEGER NOT NULL, session_kind TEXT DEFAULT 'chat',
+            id TEXT PRIMARY KEY, user_id INTEGER NOT NULL, session_kind TEXT DEFAULT 'chat', messages_revision INTEGER DEFAULT 0,
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
         )`);
         await database.dbRunAsync(`CREATE TABLE messages (
@@ -165,6 +165,36 @@ async function main() {
             );
         }
         api = await startApi(database);
+
+        await test('form choices persist separately, validate against their source, and never cross accounts', async () => {
+            const form = {type:'form', id:'pc-picker', title:'400 元 PC 选型', submitLabel:'按这些条件给方案', controls:[
+                {kind:'radio', id:'use', label:'主要用途', options:[{label:'办公',value:'work'},{label:'编程开发',value:'dev'}], value:'work'},
+                {kind:'checkbox', id:'monitor', label:'含显示器键鼠', checked:true},
+                {kind:'slider', id:'budget', label:'实际预算上限', min:300, max:600, step:100, value:400, unit:'元'}]};
+            const content = '```rai_visual\n' + JSON.stringify(form) + '\n```';
+            await database.dbRunAsync('INSERT INTO messages(id,session_id,role,content) VALUES (900,?,?,?)', ['alice-session','assistant',content]);
+            const body = {source_message_id:900,key:form.id,values:['dev',false,300]};
+            const save = (data, session, token) => api.call('POST', pinsPath(session) + '/choices', {body:data,token});
+            assert.equal((await save(body)).status,200);
+            expectError(await save(body,'alice-session','bob'),404,'session_not_found');
+            expectError(await save(body,'alice-other'),404,'source_message_not_found');
+            expectError(await save(body,'temporary-session'),400,'temporary_session_not_supported');
+            expectError(await save({...body,values:['dev',false,301]}),400,'invalid_card_choices');
+            const reader = openDatabase(filename);
+            try {
+                const row = await reader.dbGetAsync(`SELECT content, ${require('../lib/decision-workbench').messageChoicesSql} FROM messages WHERE id=900`);
+                assert.equal(row.content,content);
+                const {values,pending} = JSON.parse(row.decision_choices)[form.id];
+                assert.equal(pending,1);
+                assert.deepEqual(values,body.values);
+                const schema = require('../public/interactive-visual-schema');
+                assert.equal(schema.choiceSummary(schema.restoreChoices(form,values)), '主要用途: 编程开发；含显示器键鼠: 否；实际预算上限: 300 元');
+            } finally { await reader.close(); }
+            await database.dbRunAsync('INSERT INTO messages(session_id,role,content) VALUES (?,?,?)',['alice-session','user','按这些条件给方案']);
+            assert.equal((await database.dbGetAsync('SELECT pending FROM decision_choices WHERE message_id=900')).pending,0);
+            await database.dbRunAsync('UPDATE messages SET content=? WHERE id=900',['replacement']);
+            assert.equal((await database.dbGetAsync('SELECT COUNT(*) AS n FROM decision_choices WHERE message_id=900')).n,0);
+        });
 
         await test('auth, shared limiter and private error envelope', async () => {
             for (const method of ['GET', 'POST', 'DELETE']) {
