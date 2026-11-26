@@ -24,6 +24,15 @@ async function main() {
         assert.ok(events.indexOf('aborted')<events.indexOf('fallback'),events.join(','));
         assert.ok(events.indexOf('cancelled')<events.indexOf('fallback'),events.join(','));
     }
+    // A terminal record can arrive while the HTTP connection stays open.
+    let timedOut;
+    const ended = createGptPrimaryFetch({ primaryUrl, primaryKey: 'fixture', fallbackUrl, firstTokenTimeoutMs: 2000,
+        fetchImpl: async (_url, { signal }) => {
+            signal.addEventListener('abort', () => { timedOut = signal.reason.name === 'TimeoutError'; });
+            return new Response(new ReadableStream({ start(c) { c.enqueue(encode('data: [DONE]\n\n')); } }));
+        }, fallbackFetch: async () => new Response(sse({ content: 'fallback' })) });
+    assert.equal((await ended(fallbackUrl, options())).raiProvider, 'fast');
+    assert.equal(timedOut, false, 'empty terminal stream releases primary before its deadline');
     for (const mode of ['http_error','sse_error','empty']) {
         const events=[];
         const primary=createGptPrimaryFetch({primaryUrl,primaryKey:'primary-fixture',fallbackUrl,firstTokenTimeoutMs:50,

@@ -59,10 +59,11 @@ function closeDatabase(db) {
   return new Promise((resolve) => db.close(() => resolve()));
 }
 
-async function request(baseUrl, route, { method = 'GET', token = '', body } = {}) {
+async function request(baseUrl, route, { method = 'GET', token = '', body, headers = {} } = {}) {
   const response = await fetch(`${baseUrl}${route}`, {
     method,
     headers: {
+      ...headers,
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...(body === undefined ? {} : { 'Content-Type': 'application/json' })
     },
@@ -183,6 +184,35 @@ async function main() {
     assert.equal(created.response.status, 200);
     const sessionId = created.payload.sessionId;
     assert.ok(sessionId);
+
+    const messagePath = `/api/sessions/${encodeURIComponent(sessionId)}/messages`;
+    const insertMessage = role => dbRun(db,
+      "INSERT INTO messages (session_id, role, content, created_at) VALUES (?, ?, ?, '2026-01-05 12:00:00')",
+      [sessionId, role, 'fixture']);
+    const question = await insertMessage('user');
+    const answer = await insertMessage('assistant');
+    await insertMessage('user');
+    const previous = await request(baseUrl, `${messagePath}-before/${answer.lastID}`, { token: owner.token });
+    assert.equal(previous.response.status, 200);
+    assert.deepEqual(previous.payload.map(row => row.id), [question.lastID]);
+
+    const first = await request(baseUrl, messagePath, { token: owner.token });
+    assert.equal(first.response.status, 200);
+    const etag = first.response.headers.get('etag');
+    assert.ok(etag);
+    const headers = { 'If-None-Match': etag };
+    const cached = await request(baseUrl, messagePath, { token: owner.token, headers });
+    assert.equal(cached.response.status, 304);
+    for (const header of ['etag', 'cache-control', 'x-rai-messages-revision']) {
+      assert.equal(cached.response.headers.get(header), first.response.headers.get(header));
+    }
+    const deniedCache = await request(baseUrl, messagePath, { token: stranger.token, headers });
+    assert.equal(deniedCache.response.status, 403);
+    await dbRun(db, "UPDATE messages SET content = 'revised' WHERE id = ?", [question.lastID]);
+    const updated = await request(baseUrl, messagePath, { token: owner.token, headers });
+    assert.equal(updated.response.status, 200);
+    assert.notEqual(updated.response.headers.get('etag'), etag);
+    assert.equal(updated.payload.find(row => row.id === question.lastID).content, 'revised');
 
     const initial = await request(baseUrl, `/api/sessions/${encodeURIComponent(sessionId)}/canvas`, { token: owner.token });
     assert.equal(initial.response.status, 200);
