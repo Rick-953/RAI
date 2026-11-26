@@ -76,7 +76,6 @@ async function verify() {
     const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'rai-model-tls-'));
     const keyFile = path.join(temp, 'key.pem');
     const certFile = path.join(temp, 'cert.pem');
-    const logFile = path.join(temp, 'probe.log');
     const servers = [];
     const sockets = new Set();
     const system = Object.fromEntries(Object.entries(process.env).filter(([name]) => /^(path|systemroot|ld_library_path)$/i.test(name)));
@@ -93,21 +92,16 @@ async function verify() {
     }
 
     async function probe(base, protocol, { mode = 'complete', trace = false, trust = true, env = {} } = {}) {
-        const output = fs.openSync(logFile, 'w');
-        let child;
-        try {
-            child = spawn(process.execPath, [
-                ...process.execArgv, ...(trace ? ['--trace-tls'] : []),
-                __filename, '--loopback-request', base + '/v1', protocol, mode
-            ], {
-                env: { ...nodeEnv, NODE_EXTRA_CA_CERTS: trust ? certFile : '', ...env },
-                stdio: ['ignore', 'ignore', output], timeout: 10000
-            });
-        } finally {
-            fs.closeSync(output);
-        }
+        const child = spawn(process.execPath, [
+            ...process.execArgv, ...(trace ? ['--trace-tls'] : []),
+            __filename, '--loopback-request', base + '/v1', protocol, mode
+        ], {
+            env: { ...nodeEnv, NODE_EXTRA_CA_CERTS: trust ? certFile : '', ...env },
+            stdio: ['ignore', 'ignore', 'pipe'], timeout: 10000
+        });
+        let stderr = '';
+        child.stderr.setEncoding('utf8').on('data', chunk => { stderr += chunk; });
         const [code, signal] = await once(child, 'close');
-        const stderr = fs.readFileSync(logFile, 'utf8');
         if (code !== 0) throw Object.assign(new Error(`Loopback request failed (${signal || code})`), { stderr });
         return stderr;
     }
@@ -182,7 +176,6 @@ async function verify() {
         await Promise.all(servers.map(server => new Promise(resolve => server.close(resolve))));
         fs.rmSync(keyFile, { force: true });
         fs.rmSync(certFile, { force: true });
-        fs.rmSync(logFile, { force: true });
         fs.rmdirSync(temp);
     }
 }
