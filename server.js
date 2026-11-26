@@ -6,7 +6,7 @@ const { enforceContextWindow, estimateContextTokens, CONTEXT_WINDOW_TOKENS, CONT
 const { AsyncLocalStorage } = require('node:async_hooks');
 const { CHAT_MODEL_CATALOG, CHAT_MODEL_IDS, CHAT_MODEL_LIMITS, createChatModelQuotaService } = require('./lib/chat-model-policy');
 const { createDeepSeekProviderFetch } = require('./lib/deepseek-provider-fallback');
-const { createGptPrimaryFetch } = require('./lib/gpt-provider-fallback');
+const { GPT_PRIMARY_MODELS, createGptPrimaryFetch } = require('./lib/gpt-provider-fallback');
 const { createLunaOfficialFetch, toResponsesBody } = require('./lib/luna-official-provider');
 const { estimateDeepSeekInputTokens } = require('./lib/deepseek-tokenizer');
 const { createProviderTokenStore, meterChatResponse } = require('./lib/provider-token-usage');
@@ -582,7 +582,7 @@ const GPT_PRIMARY_BASE_URL = normalizeGatewayBaseUrl(cleanEnvValue(process.env.R
 const GPT_PRIMARY_API_KEY_FILE = cleanEnvValue(process.env.RAI_GPT_PRIMARY_API_KEY_FILE);
 const GPT_PRIMARY_API_KEY = GPT_PRIMARY_API_KEY_FILE ? readGatewayApiKeyFile(GPT_PRIMARY_API_KEY_FILE) : '';
 const GPT_PRIMARY_CHAT_URL = joinGatewayEndpoint(GPT_PRIMARY_BASE_URL, 'chat/completions');
-const GPT_PRIMARY_FIRST_TOKEN_TIMEOUT_MS = 6000;
+const GPT_PRIMARY_HEADER_TIMEOUT_MS = 6000;
 const LUNA_GATEWAY_BASE_URL = normalizeGatewayBaseUrl(cleanEnvValue(process.env.RAI_LUNA_GATEWAY_BASE_URL) || 'https://api.000339.xyz/v1', { production: IS_PRODUCTION });
 const LUNA_GATEWAY_API_KEY_FILE = cleanEnvValue(process.env.RAI_LUNA_GATEWAY_API_KEY_FILE);
 const LUNA_GATEWAY_API_KEY = LUNA_GATEWAY_API_KEY_FILE ? readGatewayApiKeyFile(LUNA_GATEWAY_API_KEY_FILE) : '';
@@ -20811,19 +20811,10 @@ const fetchDeepSeekProvider = createDeepSeekProviderFetch({
     primaryTimeoutMs: CHAT_PROVIDER_FIRST_TOKEN_TIMEOUT_MS,
     fetchImpl: fetchChatProviderWithLatency
 });
-const fetchGptFastProvider = createDeepSeekProviderFetch({
-    primaryUrl: API_PROVIDERS.rai_gpt_gateway.baseURL,
-    primaryKey: GPT_GATEWAY_API_KEY,
-    primaryModels: API_PROVIDERS.rai_gpt_gateway.models,
-    officialUrl: DEEPSEEK_CHAT_COMPLETIONS_URL,
-    officialKey: ENV_API_KEYS.DEEPSEEK_API_KEY,
-    primaryTimeoutMs: CHAT_PROVIDER_FIRST_TOKEN_TIMEOUT_MS,
-    fetchImpl: fetchChatProviderWithLatency
-});
 const fetchGptProvider = createGptPrimaryFetch({
     primaryUrl: GPT_PRIMARY_CHAT_URL, primaryKey: GPT_PRIMARY_API_KEY,
-    fallbackUrl: API_PROVIDERS.rai_gpt_gateway.baseURL, fallbackFetch: fetchGptFastProvider,
-    models: API_PROVIDERS.rai_gpt_gateway.models, firstTokenTimeoutMs: GPT_PRIMARY_FIRST_TOKEN_TIMEOUT_MS,
+    fallbackUrl: API_PROVIDERS.rai_gpt_gateway.baseURL, fallbackFetch: fetchChatProviderWithLatency,
+    headerTimeoutMs: GPT_PRIMARY_HEADER_TIMEOUT_MS,
     fetchImpl: fetchChatProviderWithLatency
 });
 const fetchLunaProvider = createLunaOfficialFetch({
@@ -20964,7 +20955,7 @@ async function fetchModelProvider(url, options = {}) {
     if (turn && protectedModel && response.ok && !response.raiOfficialFallback) turn.used.add(modelId);
     if (response.ok && parsedBody?.stream === true && response.raiMirroriumFallback && !response.raiOfficialFallback && turn?.response && !turn.response.writableEnded) {
         turn.response.write('data: ' + JSON.stringify({ type: 'model_info', model: modelId, actualModel: modelId,
-            provider: 'fast', reason: '主线路 6 秒内无有效首字或服务失败，已停止旧请求并切换备用线路' }) + '\n\n');
+            provider: 'fast', reason: '主线路限流，已切换到同模型备用线路' }) + '\n\n');
     }
     if (response.ok && response.raiProvider === 'mirrorium' && turn?.response && !turn.response.writableEnded && parsedBody?.stream === true) {
         turn.response.write('data: ' + JSON.stringify({ type: 'model_info', model: modelId, actualModel: modelId,
@@ -21316,6 +21307,16 @@ app.post('/api/chat/stream', apiLimiter, authenticateToken, async (req, res) => 
                 return res.status(403).json({ error: '无权访问此会话' });
             }
             activeSessionKind = String(ownedSession.session_kind || 'chat');
+        }
+
+        if (!req.softwareClient && isContinuationRequest && sessionId) {
+            const previous = await dbGetAsync(
+                'SELECT model FROM stream_drafts WHERE request_id = ? AND user_id = ? AND session_id = ?',
+                [normalizedContinuationRequestId, req.user.userId, sessionId]
+            );
+            if (GPT_PRIMARY_MODELS.includes(previous?.model)) {
+                return res.status(409).json({ code: 'chat_automatic_replay_disabled', error: '连接中断，请手动重新生成。' });
+            }
         }
 
         const sessionPromptContext = await lockAndResolveSessionPromptContext({
@@ -22324,6 +22325,13 @@ if (clientFileExecution && systemPrompt) {
                 autoRoutingReason = `${normalizedResearchMode === 'deep' ? '深度研究' : '快速研究'}讨论: ${researchAgentLabels} 轮流质疑，由 ${researchModelLabel(finalModel)} 主控判断停止并回答`;
                 console.log(` research_debate enabled mode=${normalizedResearchMode} master=${finalModel}`);
             }
+        }
+
+        if (!req.softwareClient && isContinuationRequest && GPT_PRIMARY_MODELS.includes(finalModel)) {
+            res.write(`data: ${JSON.stringify({ type: 'error', code: 'chat_automatic_replay_disabled', error: '连接中断，请手动重新生成。' })}\n\n`);
+            await releaseActiveRequest();
+            res.end();
+            return;
         }
 
         //  关键修复：添加白名单验证（防御性编程）
@@ -23526,6 +23534,7 @@ if (clientFileExecution && systemPrompt) {
         };
 
         const tryUniversalRuntimeFallback = async ({ failedStatus, failedBody, reason }) => {
+            if (GPT_PRIMARY_MODELS.includes(finalModel)) return null;
             const failedModel = finalModel;
             const failedActualModel = actualModel;
             const normalizedFailedStatus = String(failedStatus || '').toLowerCase();
@@ -23712,7 +23721,10 @@ if (clientFileExecution && systemPrompt) {
                     ...context
                 }
             });
-            res.write(`data: ${JSON.stringify({ type: 'error', error: buildUserFacingApiFailureMessage() })}\n\n`);
+            const error = GPT_PRIMARY_MODELS.includes(finalModel)
+                ? '所选模型暂时不可用，请稍后手动重试。'
+                : buildUserFacingApiFailureMessage();
+            res.write(`data: ${JSON.stringify({ type: 'error', error })}\n\n`);
             await releaseActiveRequest();
             res.end();
         };
@@ -23858,7 +23870,7 @@ if (clientFileExecution && systemPrompt) {
                 const safeApiUrl = isGeminiAPI ? apiUrl.replace(/key=[^&]+/, 'key=***') : apiUrl;
                 console.log(` 正在调用: ${safeApiUrl}`);
                 console.log(`   API密钥: 已配置`);
-                if (runtimeFallbackCircuit.isOpen(finalModel)) {
+                if (!GPT_PRIMARY_MODELS.includes(finalModel) && runtimeFallbackCircuit.isOpen(finalModel)) {
                     clearTimeout(timeoutId);
                     const fallbackResult = await tryUniversalRuntimeFallback({
                         failedStatus: 'circuit_open',
@@ -24455,6 +24467,10 @@ if (clientFileExecution && systemPrompt) {
             break;
             } catch (streamError) {
                 const cancelled = clientAborted || chatRequestCancelled || await checkCancellation();
+                if (GPT_PRIMARY_MODELS.includes(finalModel)) {
+                    await reader.cancel().catch(() => undefined);
+                    throw streamError;
+                }
                 if (!canRetryStream(streamError, { attempt: streamAttempt, cancelled,
                     remainingMs: chatRequestBudget.nextAttemptTimeoutMs() })) throw streamError;
                 clearTimeout(timeoutId);
@@ -24467,7 +24483,7 @@ if (clientFileExecution && systemPrompt) {
             // Some providers finish a thinking stream without ever emitting content
             // (reasoning-only stop). Recover a real answer on the same provider before
             // marking the turn degraded, so the user never sees an empty/truncated reply.
-            if (!primaryHasUsableToolCall && !String(fullContent || '').trim() && String(reasoningContent || '').trim()) {
+            if (!GPT_PRIMARY_MODELS.includes(finalModel) && !primaryHasUsableToolCall && !String(fullContent || '').trim() && String(reasoningContent || '').trim()) {
                 try {
                     const recoveryBody = { ...fetchBody, stream: false };
                     if (Array.isArray(recoveryBody.messages)) {
@@ -25978,6 +25994,10 @@ if (clientFileExecution && systemPrompt) {
                             clearTimeout(continueTimeoutId);
                             const retryBudgetMs = chatRequestBudget ? chatRequestBudget.nextAttemptTimeoutMs() : 0;
                             const cancelled = clientAborted || chatRequestCancelled || await checkCancellation();
+                            if (GPT_PRIMARY_MODELS.includes(finalModel)) {
+                                continueController.abort();
+                                throw continueRetryErr;
+                            }
                             if (!canRetryStream(continueRetryErr, { attempt: continueAttempt, cancelled, remainingMs: retryBudgetMs })) throw continueRetryErr;
                             const retryable = String(continueRetryErr?.code || continueRetryErr?.name || '');
                             console.warn(` 续传中断，重试(${continueAttempt + 1}/${MAX_STREAM_RETRIES}): code=${retryable || 'unknown'}`);
@@ -26021,7 +26041,7 @@ if (clientFileExecution && systemPrompt) {
                         console.log(` 续传流式调用完成 (round=${toolRound}), next_tool_calls=${pendingToolCalls.length}, finish_reason=${safeContinueFinishReason}`);
 
                         // 空工具调用兜底：流式分片可能导致工具参数丢失（Kimi 大参数 JSON 跨 chunk），改用非流式重试
-                        if (pendingToolCalls.length === 0 && clientFileExecution
+                        if (!GPT_PRIMARY_MODELS.includes(finalModel) && pendingToolCalls.length === 0 && clientFileExecution
                             && String(continueStreamFinishReason) === 'tool_calls' && !clientNonStreamRetryDone) {
                             clientNonStreamRetryDone = true;
                             console.warn(` 空工具调用，尝试非流式重试获取完整参数: model=${actualModel}`);
