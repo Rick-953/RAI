@@ -248,6 +248,8 @@ PM2 is also suitable in **fork mode** when it injects the complete environment. 
 
 ### 3. Put HTTPS in front of RAI
 
+For the hosted service, see the [direct HTTPS listener](ops/origin-pqc/README.md) and [model gateway TLS verification](docs/model-upstream-tls.md).
+
 An Nginx location should preserve proxy headers, allow uploads, and disable buffering for streamed responses:
 
 ```nginx

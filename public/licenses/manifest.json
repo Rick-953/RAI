@@ -5,8 +5,8 @@
   "inputs": {
     "package-lock.json": "6206a5130fbf1460f7a811f5095de23358d08db2262a1499b1f95f0e12c7a2b5",
     "public/lib/vendor-manifest.json": "6a86dcbb79a57b7ffa8a844f7f0188f3c1e5427bd7dfe4445bfb94d870277d8e",
-    "src-tauri/Cargo.lock": "d57240d860ee4a350c59356711296a80f3fef7902e4d7f9689ef1bb4882a08b9",
-    "rai-agent/Cargo.lock": "e21e5bc9cb46cab50d040e7434fac7e3978810c1527adb789d9966882feab8c6"
+    "src-tauri/Cargo.lock": "ff871fec78c946aa9062b5852e348c00198a4e692a7f55116dbc6e43bea1d89d",
+    "rai-agent/Cargo.lock": "c3e99a2b2a6c3438827eee5380ffbed041081ea7c6e77fc6c2f5d89c39d6cde4"
   },
   "components": [
     {
@@ -1568,17 +1568,17 @@
       ]
     },
     {
-      "id": "cargo-cookie-0.18.1",
+      "id": "cargo-cookie-0.18.3",
       "name": "cookie",
-      "version": "0.18.1",
+      "version": "0.18.3",
       "license": "MIT OR Apache-2.0",
       "source": "https://github.com/SergioBenitez/cookie-rs",
       "scope": "desktop-agent",
       "usedBy": [
         "RAI Desktop"
       ],
-      "archiveSha256": "4ddef33a339a91ea89fb53151bd0a4689cfce27055c291dfa69945475d22c747",
-      "sourceArchive": "https://static.crates.io/crates/cookie/cookie-0.18.1.crate",
+      "archiveSha256": "d55f2d6c30eeec7d5c6f98bd4395d4abb1895629eab97ee6522d340623615f8a",
+      "sourceArchive": "https://static.crates.io/crates/cookie/cookie-0.18.3.crate",
       "notices": [
         {
           "name": "LICENSE-APACHE",
@@ -3055,9 +3055,9 @@
       ]
     },
     {
-      "id": "cargo-form_urlencoded-1.2.2",
+      "id": "cargo-form_urlencoded-1.2.3",
       "name": "form_urlencoded",
-      "version": "1.2.2",
+      "version": "1.2.3",
       "license": "MIT OR Apache-2.0",
       "source": "https://github.com/servo/rust-url",
       "scope": "desktop-agent",
@@ -3065,8 +3065,8 @@
         "RAI Desktop",
         "RAI Local Agent"
       ],
-      "archiveSha256": "cb4cb245038516f5f85277875cdaa4f7d2c9a0fa0468de06ed190163b1581fcf",
-      "sourceArchive": "https://static.crates.io/crates/form_urlencoded/form_urlencoded-1.2.2.crate",
+      "archiveSha256": "afa489199eaffb1211795df1c6236ce1ad0d41a6fa45250add73e3b02420f06e",
+      "sourceArchive": "https://static.crates.io/crates/form_urlencoded/form_urlencoded-1.2.3.crate",
       "notices": [
         {
           "name": "LICENSE-APACHE",
@@ -10154,9 +10154,9 @@
       ]
     },
     {
-      "id": "cargo-url-2.5.8",
+      "id": "cargo-url-2.5.9",
       "name": "url",
-      "version": "2.5.8",
+      "version": "2.5.9",
       "license": "MIT OR Apache-2.0",
       "source": "https://github.com/servo/rust-url",
       "scope": "desktop-agent",
@@ -10164,8 +10164,8 @@
         "RAI Desktop",
         "RAI Local Agent"
       ],
-      "archiveSha256": "ff67a8a4397373c3ef660812acab3268222035010ab8680ec4215f38ba3d0eed",
-      "sourceArchive": "https://static.crates.io/crates/url/url-2.5.8.crate",
+      "archiveSha256": "f00cd2407bb42c0ef17be88d4cf020f5cceffd121665bac9b8b9493a369b3b1a",
+      "sourceArchive": "https://static.crates.io/crates/url/url-2.5.9.crate",
       "notices": [
         {
           "name": "LICENSE-APACHE",

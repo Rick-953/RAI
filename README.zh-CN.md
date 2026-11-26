@@ -248,6 +248,8 @@ PM2 的 **fork 模式**也可以使用，但必须完整注入环境变量。不
 
 ### 3. 配置 HTTPS 反向代理
 
+正式站的两段传输可分别参照 [直连 HTTPS 入口配置](ops/origin-pqc/README.md) 和 [模型上游 TLS 验证](docs/model-upstream-tls.md)。
+
 Nginx 需要保留代理头、允许上传，并为流式回答关闭缓冲：
 
 ```nginx
