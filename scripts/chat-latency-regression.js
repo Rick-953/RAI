@@ -28,6 +28,9 @@ async function main() {
     assert.equal(new TextDecoder().decode(first.value), event({ reasoning_content: canary }), 'the first reasoning is readable before the answer exists');
     clock = 21;
     assert.equal(response.write('data: '+JSON.stringify({ type: 'reasoning', content: canary })+'\n\n'), false, 'write preserves backpressure result');
+    clock = 30; latency.startToolRound();
+    clock = 38; latency.endToolRound();
+    clock = 40; latency.startToolRound();
     clock = 70; secondRelease();
     const second = await reader.read();
     assert.equal(new TextDecoder().decode(second.value), event({ content: '正文' })+'data: [DONE]\n\n');
@@ -43,6 +46,18 @@ async function main() {
     assert.equal(latency.finish(false), null, 'one event per request');
     assert.equal(response.write, originalWrite);
     assert.equal(summary.model, 'gpt-6.2-astra');
+    assert.equal(summary.toolWaitBeforeContentMs, 39, 'open tool interval is capped at first body write');
+    const { report } = require('./chat-latency-report');
+    const historical = { event: 'chat_latency', model: summary.model, stages: {}, attempts: [
+        { model: canary, provider: canary, phase: canary, started: 1, status: 503 }
+    ] };
+    const stats = await report(['unrelated log', JSON.stringify(historical), JSON.stringify(summary)]);
+    const modelStats = stats.byRequestedModel[summary.model];
+    assert.deepEqual(modelStats.firstContent, { n: 1, p50Ms: 71, p95Ms: 71 });
+    assert.equal(modelStats.withoutContent, 1);
+    assert.equal(modelStats.toolWait.p50Ms, 39);
+    assert.equal(Object.keys(stats.upstreamAttemptsStartingBeforeFirstContent).length, 2, 'exclude attempts started after visible output');
+    assert.ok(!JSON.stringify(stats).includes(canary));
     assert.equal(summary.stages.first_reasoning_write, 21);
     assert.equal(summary.stages.first_content_write, 71);
     assert.equal(summary.attempts[0].headers, 8);

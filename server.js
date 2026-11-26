@@ -16463,6 +16463,12 @@ app.get('/api/sessions/:id/messages', authenticateToken, (req, res) => {
             return res.status(403).json({ error: '无权访问此会话' });
         }
 
+        const etag = makePrivateEtag(`${PACKAGE_VERSION}:${req.user.userId}:${req.params.id}:${session.messages_revision}`);
+        res.setHeader('Cache-Control', 'private, no-cache');
+        if (requestMatchesEtag(req, etag)) {
+            return res.set({ ETag: etag, 'X-RAI-Messages-Revision': String(session.messages_revision) }).status(304).end();
+        }
+
         // 只返回轻量附件元数据；不把历史 Base64 附件正文放进消息列表。
         db.all(
             `SELECT id, session_id, role, content, request_id, reasoning_content, model, attachments,
@@ -16497,11 +16503,8 @@ app.get('/api/sessions/:id/messages', authenticateToken, (req, res) => {
                         attachment_refs
                     };
                 }));
-                const etag = makePrivateEtag(`${PACKAGE_VERSION}:${req.user.userId}:${req.params.id}:${session.messages_revision}`);
-                res.setHeader('Cache-Control', 'private, no-cache');
                 res.setHeader('ETag', etag);
                 res.setHeader('X-RAI-Messages-Revision', String(session.messages_revision));
-                if (requestMatchesEtag(req, etag)) return res.status(304).end();
                 res.json(payload);
             }
         );
@@ -18109,17 +18112,18 @@ app.get('/api/sessions/:sessionId/messages-before/:messageId', authenticateToken
         }
 
         // 获取目标消息的创建时间
-        db.get('SELECT created_at FROM messages WHERE id = ? AND session_id = ?',
+        db.get('SELECT id, created_at FROM messages WHERE id = ? AND session_id = ?',
             [messageId, sessionId],
             (err, targetMsg) => {
-                if (err || !targetMsg) {
+                if (err) return res.status(500).json({ error: '数据库错误' });
+                if (!targetMsg) {
                     return res.status(404).json({ error: '消息不存在' });
                 }
 
                 // 获取该消息之前的所有消息
                 db.all(
-                    'SELECT * FROM messages WHERE session_id = ? AND created_at < ? ORDER BY created_at ASC, id ASC',
-                    [sessionId, targetMsg.created_at],
+                    'SELECT * FROM messages WHERE session_id = ? AND (created_at, id) < (?, ?) ORDER BY created_at ASC, id ASC',
+                    [sessionId, targetMsg.created_at, targetMsg.id],
                     (err, messages) => {
                         if (err) {
                             console.error(' 获取消息失败:', sanitizeReportContext(err));
@@ -20766,6 +20770,7 @@ const chatModelQuotaService = createChatModelQuotaService({ withTransaction: wit
 const providerTokenStore = createProviderTokenStore({ withTransaction: withMainDbTransaction,
     dailyLimit: OPENAI_LUNA_DAILY_TOKEN_LIMIT, safetyMargin: OPENAI_LUNA_SAFETY_MARGIN, externalReserve: OPENAI_LUNA_EXTERNAL_TOKEN_RESERVE });
 function chatLatencyProvider(url, modelId = '') {
+    if (modelId === 'gpt-6-luna' && url === LUNA_GATEWAY_CHAT_URL) return 'luna_gateway';
     if (url === GPT_PRIMARY_CHAT_URL) return 'gpt_mirrorium';
     if (url === DEEPSEEK_CHAT_COMPLETIONS_URL) return 'deepseek_official';
     if (url === API_PROVIDERS.rai_gpt_gateway.baseURL && !String(modelId).startsWith('deepseek')) return 'gpt_fast';
@@ -20785,12 +20790,14 @@ async function fetchChatProviderWithLatency(url, options = {}) {
     if (!allowedDestinations.has(url)) throw new Error('unconfigured_chat_provider_endpoint');
     options = { ...options, redirect: 'error' };
     const latency = chatModelQuotaContext.getStore()?.latency;
+    if (!latency) return fetch(url, options);
     let body;
     try { body = JSON.parse(options.body || '{}'); } catch (_) { /* Non-model HTTP. */ }
-    if (!latency || !Array.isArray(body?.messages)) return fetch(url, options);
+    if (!Array.isArray(body?.messages)) return fetch(url, options);
     return fetchWithLatency(fetch, url, options, latency, {
-        provider: chatLatencyProvider(url, body.model), model: body.model, streaming: body.stream === true, call: options.raiLatencyCall
-    });
+        provider: chatLatencyProvider(url, body.model), model: body.model, streaming: body.stream === true,
+        call: options.raiLatencyCall, phase: options.raiLatencyPhase
+    }, body);
 }
 const fetchDeepSeekProvider = createDeepSeekProviderFetch({
     primaryUrl: joinGatewayEndpoint(DEEPSEEK_FAST_BASE_URL, 'chat/completions'),
@@ -20895,6 +20902,7 @@ async function fetchModelProvider(url, options = {}) {
                 if (options.signal?.aborted) controller.abort();
                 try {
                     let summaryResponse = await fetchLunaProvider(provider.baseURL, {
+                        raiLatencyPhase: 'context_summary', raiLatencyCall: turn?.latency?.nextCall(),
                         method: 'POST', headers: buildProviderFetchHeaders(provider, 'rai_luna_gateway'), signal: controller.signal,
                         body: JSON.stringify({ model: 'gpt-6-luna', stream: false, max_tokens: 2000,
                             reasoning_effort: 'none', messages: [
@@ -20923,15 +20931,13 @@ async function fetchModelProvider(url, options = {}) {
             turn.contextState = { hash: contextHash, body: compressedBody };
             turn.contextMessages = compressedBody.messages;
         }
-        options = { ...options, body: JSON.stringify(compressedBody) };
-    }
-    if (parsedBody?.messages) {
-        const body = JSON.parse(options.body);
-        const profile = turn?.reasoningProfile || (['low', 'medium', 'high', 'xhigh', 'max'].includes(body.reasoning_effort) ? body.reasoning_effort : 'low');
-        const thinkingMode = turn ? turn.thinkingMode : body.thinking?.type === 'enabled' || !!body.reasoning_effort;
-        const definition = ADMIN_MODEL_CATALOG.find(item => item.id === body.model || (MODEL_ROUTING[item.id]?.model === body.model));
-        applyChatReasoningPolicy(body, { thinkingMode, profile, definition, provider: definition?.provider });
-        const outgoing = url === DEEPSEEK_CHAT_COMPLETIONS_URL && definition?.provider === 'deepseek' ? officialDeepSeekBody(body, body.model) : body;
+        // Only top-level fields are rewritten by the provider policies.
+        const bodyForWire = { ...compressedBody };
+        const profile = turn?.reasoningProfile || (['low', 'medium', 'high', 'xhigh', 'max'].includes(bodyForWire.reasoning_effort) ? bodyForWire.reasoning_effort : 'low');
+        const thinkingMode = turn ? turn.thinkingMode : bodyForWire.thinking?.type === 'enabled' || !!bodyForWire.reasoning_effort;
+        const definition = ADMIN_MODEL_CATALOG.find(item => item.id === bodyForWire.model || (MODEL_ROUTING[item.id]?.model === bodyForWire.model));
+        applyChatReasoningPolicy(bodyForWire, { thinkingMode, profile, definition, provider: definition?.provider });
+        const outgoing = url === DEEPSEEK_CHAT_COMPLETIONS_URL && definition?.provider === 'deepseek' ? officialDeepSeekBody(bodyForWire, bodyForWire.model) : bodyForWire;
         requestChatStreamUsage(outgoing);
         options = { ...options, body: JSON.stringify(outgoing) };
     }
@@ -20950,7 +20956,7 @@ async function fetchModelProvider(url, options = {}) {
     }
     // Only streaming answer/tool requests update provenance, not internal compression summaries.
     if (turn && response.ok && parsedBody?.stream === true) {
-        turn.actualModel = response.raiOfficialFallback ? 'deepseek-flash' : JSON.parse(options.body).model;
+        turn.actualModel = response.raiOfficialFallback ? 'deepseek-flash' : modelId;
     }
     if (turn && protectedModel && response.ok && !response.raiOfficialFallback) turn.used.add(modelId);
     if (response.ok && parsedBody?.stream === true && response.raiMirroriumFallback && !response.raiOfficialFallback && turn?.response && !turn.response.writableEnded) {
@@ -23572,6 +23578,7 @@ if (clientFileExecution && systemPrompt) {
                         : payload.apiUrl;
                     console.warn(` runtime_fallback try=${fallbackModel} provider=${fallbackRouting.provider} url=${safeFallbackUrl}`);
                     fallbackResponse = await fetchModelProvider(payload.apiUrl, {
+                        raiLatencyPhase: 'model_fallback',
                         method: 'POST',
                         headers: payload.fetchHeaders,
                         body: JSON.stringify(payload.fetchBody),
@@ -23956,6 +23963,7 @@ if (clientFileExecution && systemPrompt) {
 
                             try {
                                 apiResponse = await fetchModelProvider(providerConfig.baseURL, {
+                                    raiLatencyPhase: 'model_fallback',
                                     method: 'POST',
                                     headers: buildProviderFetchHeaders(providerConfig, routing.provider),
                                     body: JSON.stringify(requestBody)
@@ -24022,6 +24030,7 @@ if (clientFileExecution && systemPrompt) {
                             const fallbackTimeoutId = setTimeout(() => fallbackController.abort(), fallbackTimeoutMs);
                             try {
                                 apiResponse = await fetchModelProvider(fallbackPayload.apiUrl, {
+                                    raiLatencyPhase: 'model_fallback',
                                     method: 'POST',
                                     headers: fallbackPayload.fetchHeaders,
                                     body: JSON.stringify(fallbackPayload.fetchBody),
@@ -24176,6 +24185,7 @@ if (clientFileExecution && systemPrompt) {
                 const retryController = createChatAbortController();
                 timeoutId = setTimeout(() => retryController.abort(), chatRequestBudget.nextAttemptTimeoutMs());
                 const retryResponse = await fetchModelProvider(apiUrl, {
+                    raiLatencyPhase: 'stream_retry',
                     method: 'POST', headers: fetchHeaders,
                     body: JSON.stringify(buildStreamRetryBody(fetchBody, fullContent)), signal: retryController.signal
                 });
@@ -24462,6 +24472,7 @@ if (clientFileExecution && systemPrompt) {
                         ];
                     }
                     const recoveryResponse = await fetchModelProvider(apiUrl, {
+                        raiLatencyPhase: 'answer_recovery',
                         method: 'POST',
                         headers: fetchHeaders,
                         body: JSON.stringify(recoveryBody)
@@ -24922,6 +24933,7 @@ if (clientFileExecution && systemPrompt) {
                         console.log(` 工具调用轮次: ${toolRound}, calls=${pendingToolCalls.length}`);
 
                         const executedToolResults = [];
+                        if (pendingToolCalls.length) req.chatLatency?.startToolRound();
                         for (const toolCall of pendingToolCalls) {
                             const toolName = toolCall.function.name;
                             const args = toolCall._args;
@@ -25561,6 +25573,7 @@ if (clientFileExecution && systemPrompt) {
                             }
                         }
 
+                        req.chatLatency?.endToolRound();
                         if (executedToolResults.length === 0 && !deliveredInterjection && !activeRequestInterjections.get(requestId)?.length) {
                             console.warn(` 本轮没有可执行的工具结果，结束工具循环`);
                             break;
@@ -25743,6 +25756,7 @@ if (clientFileExecution && systemPrompt) {
                             continueTimeoutId = setTimeout(() => continueController.abort(), chatRequestBudget.nextAttemptTimeoutMs());
                         try {
                             const continueResponse = await fetchModelProvider(continueApiUrl, {
+                                raiLatencyPhase: continueAttempt ? 'stream_retry' : 'tool_continuation',
                                 method: 'POST',
                                 headers: continueHeaders,
                                 body: JSON.stringify(buildStreamRetryBody(continueRequestBody, fullContent.slice(continueContentStart))),
@@ -26016,6 +26030,7 @@ if (clientFileExecution && systemPrompt) {
                                     ]
                                 };
                                 const retryRes = await fetchModelProvider(continueApiUrl, {
+                                    raiLatencyPhase: 'tool_repair',
                                     method: 'POST',
                                     headers: continueHeaders,
                                     body: JSON.stringify(retryBody),

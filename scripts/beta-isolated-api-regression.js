@@ -1665,8 +1665,7 @@ async function runTests(context) {
         assert.equal(edit.body?.content, editedContent);
 
         await withDb(context.dbPath, async (db) => {
-            await dbRun(db, "UPDATE messages SET created_at = datetime('now', '-2 seconds') WHERE id = ?", [userMessage.id]);
-            await dbRun(db, "UPDATE messages SET created_at = datetime('now', '-1 seconds') WHERE id = ?", [assistantMessage.id]);
+            await dbRun(db, "UPDATE messages SET created_at = CURRENT_TIMESTAMP WHERE id IN (?, ?)", [userMessage.id, assistantMessage.id]);
         });
         const before = await apiRequest(
             context.baseUrl,
