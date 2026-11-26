@@ -82,6 +82,10 @@ jobs:
         run: npm ci
       - name: Validate isolated harness syntax
         run: node --check scripts/security-smoke-harness.js
+      - name: Verify model upstream TLS and CONNECT
+        run: |
+          npm run test:model-transport -- --require-hybrid
+          node --openssl-config=scripts/model-upstream-tls.cnf scripts/model-transport-regression.js --require-hybrid
       - name: Verify online CX relay protocol
         run: npm run test:cx-remote
       - name: Run formal audit suite

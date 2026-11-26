@@ -1,0 +1,11 @@
+config_diagnostics = 1
+nodejs_conf = rai_nodejs
+
+[rai_nodejs]
+ssl_conf = rai_ssl
+
+[rai_ssl]
+system_default = rai_tls
+
+[rai_tls]
+Groups = *X25519MLKEM768/DEFAULT

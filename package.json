@@ -46,6 +46,7 @@
     "test:network-address-policy": "node scripts/network-address-policy-regression.js && node scripts/search-images-regression.js",
     "test:generated-image-cleanup": "node scripts/generated-image-cleanup-regression.js",
     "test:gpt-gateway": "node scripts/gpt-gateway-regression.js",
+    "test:model-transport": "node scripts/model-transport-regression.js",
     "test:image-generation": "node scripts/image-generation-regression.js && node scripts/image-generation-runtime-regression.js",
     "test:luna-official": "node scripts/luna-official-regression.js",
     "test:model-points-pricing": "node scripts/model-points-pricing-regression.js",
