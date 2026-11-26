@@ -74,6 +74,10 @@ async function main() {
       let body = null;
       try { body = request.postDataJSON(); } catch (_) { /* Empty or non-JSON request. */ }
       requests.push({ method: request.method(), path: url.pathname, body });
+      if (request.method() === 'POST' && /^\/api\/sessions\/[^/]+\/decision-pins\/choices$/.test(url.pathname)) {
+        assert.ok(Number.isSafeInteger(body?.source_message_id) && Array.isArray(body.values));
+        return route.fulfill({ status: 200, contentType: 'application/json', body: '{"saved":true}' });
+      }
       const match = url.pathname.match(/^\/api\/sessions\/([^/]+)\/decision-pins(?:\/(\d+))?$/);
       if (match) {
         const sessionId = decodeURIComponent(match[1]);
@@ -144,6 +148,8 @@ async function main() {
     await page.locator('.decision-auto-card [data-action="apply"]').click();
     assert.equal(await page.locator('#messageInput').inputValue(), '');
     assert.match(await page.evaluate(() => decisionWorkbenchController.takeChoiceSummary()), /600/);
+    assert.ok(requests.some(request => request.method === 'POST' && request.path.endsWith('/decision-pins/choices')
+      && request.body?.source_message_id === 11));
     assert.equal(await page.evaluate(() => decisionWorkbenchController.takeChoiceSummary()), '');
     assert.equal(requests.some(request => request.path.endsWith('/chat/stream')), false);
     assert.equal(await page.evaluate(() => decisionWorkbenchController.getVisualState()[0].items[0].value), 600);
@@ -253,6 +259,7 @@ async function main() {
     await migrating.locator('.rai-visual-number[data-field="item-0"]').fill('777');
     assert.equal(await page.evaluate(() => decisionWorkbenchController.getVisualState()[0].items[0].value), 777,
       'inline callbacks follow the database-ID migration after the DOM is preserved');
+    assert.match(await page.evaluate(() => decisionWorkbenchController.takeChoiceSummary()), /777/);
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
     await page.locator('#messageInput').fill('');
     await inline.scrollIntoViewIfNeeded();

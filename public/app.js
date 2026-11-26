@@ -2422,8 +2422,8 @@ function getRaiWebBasePath() {
 const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
-const RAI_APP_VERSION = '0.13.56';
-const RAI_BUILD_ID = '20261120-models62';
+const RAI_APP_VERSION = '0.13.57';
+const RAI_BUILD_ID = '20261126-shell-cache';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -32688,16 +32688,7 @@ function showAppUpdatePrompt(latestVersion) {
   requestAnimationFrame(() => prompt.classList.add('show'));
 }
 
-async function refreshToLatestAppVersion(latestVersion) {
-  try {
-    if (window.caches?.keys) {
-      const keys = await window.caches.keys();
-      await Promise.all(keys.map((key) => window.caches.delete(key)));
-    }
-  } catch (error) {
-    console.warn('清理缓存失败，将继续刷新:', error);
-  }
-
+function refreshToLatestAppVersion(latestVersion) {
   const url = new URL(window.location.href);
   url.searchParams.set('rai_refresh', String(Date.now()));
   if (latestVersion) {
@@ -32716,7 +32707,8 @@ async function checkForAppUpdate() {
 
     const data = await response.json();
     const latestVersion = String(data?.version || '').trim();
-    if (latestVersion && compareVersionStrings(RAI_APP_VERSION, latestVersion) > 0) {
+    if (latestVersion && (compareVersionStrings(RAI_APP_VERSION, latestVersion) > 0
+        || (latestVersion === RAI_APP_VERSION && data.build && data.build !== RAI_BUILD_ID))) {
       showAppUpdatePrompt(latestVersion);
     }
   } catch (error) {

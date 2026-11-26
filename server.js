@@ -313,6 +313,8 @@ function isProvisionedTestAccount(user, normalizedEmail) {
         && normalizeEmailForAuth(user?.email) === PROVISIONED_TEST_ACCOUNT_EMAIL;
 }
 const PACKAGE_VERSION = packageInfo.version || '0.0.0';
+const WEB_BUILD_ID = fs.readFileSync(path.join(__dirname, 'public', 'index.html'), 'utf8')
+    .match(/src="app\.js\?v=([^"]+)"/)?.[1] ?? null;
 // Onboarding guide version; clients may only mark onboarding as completed for the current guide version.
 const GUIDE_VERSION = 1;
 const resolveWindowsDownloads = createWindowsDownloadsResolver();
@@ -12352,6 +12354,7 @@ app.get('/api/version', (req, res) => {
     res.json({
         success: true,
         version: PACKAGE_VERSION,
+        build: WEB_BUILD_ID,
         timestamp: new Date().toISOString()
     });
 });
@@ -20989,7 +20992,9 @@ app.post('/api/chat/stream', apiLimiter, authenticateToken, async (req, res) => 
     let activeRequestRegistered = false;
     const releaseActiveRequest = async () => {
         if (!activeRequestRegistered) return;
-        await dbRunAsync('DELETE FROM active_requests WHERE id = ?', [requestId]);
+        await enqueueMainDbTransaction(() => transactionDbRunAsync(
+            'DELETE FROM active_requests WHERE id = ?', [requestId]
+        ));
         activeRequestInterjections.delete(requestId);
         activeRequestRegistered = false;
     };
