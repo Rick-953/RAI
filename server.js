@@ -20992,7 +20992,9 @@ app.post('/api/chat/stream', apiLimiter, authenticateToken, async (req, res) => 
     let activeRequestRegistered = false;
     const releaseActiveRequest = async () => {
         if (!activeRequestRegistered) return;
-        await dbRunAsync('DELETE FROM active_requests WHERE id = ?', [requestId]);
+        await enqueueMainDbTransaction(() => transactionDbRunAsync(
+            'DELETE FROM active_requests WHERE id = ?', [requestId]
+        ));
         activeRequestInterjections.delete(requestId);
         activeRequestRegistered = false;
     };
