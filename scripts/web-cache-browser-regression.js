@@ -9,24 +9,36 @@ const { chromium, webkit } = require('playwright');
 
 const publicRoot = path.resolve(__dirname, '../public');
 const engine = process.env.RAI_BROWSER_ENGINE === 'webkit' ? webkit : chromium;
+const workerSource = fs.readFileSync(path.join(publicRoot, 'sw.js'), 'utf8');
+const [, version, build] = workerSource.match(/const RAI_SW_VERSION = '([\d.]+)-([^']+)'/);
 let browser, server, origin, homeUnavailable = false, missingAsset = false;
+let serverBuild = build, versionUnavailable = false, homeRequests = 0, versionRequests = 0;
 
 before(async () => {
   server = http.createServer((request, response) => {
-    const pathname = new URL(request.url, 'http://localhost').pathname;
+    const { pathname } = new URL(request.url, 'http://localhost');
     const relative = pathname.replace(/^\/beta\//, '/');
     response.setHeader('Cache-Control', 'no-store');
     if (relative === '/' || relative === '/index.html' || relative === '/verify') {
       if (homeUnavailable && relative !== '/verify') return response.destroy();
+      if (relative !== '/verify') homeRequests++;
       response.setHeader('Content-Type', 'text/html');
-      return response.end(`<title>${relative === '/verify' ? 'Verification' : 'RAI home'}</title>`);
+      const title = serverBuild === build ? 'RAI home' : 'RAI home updated';
+      return response.end(`<title>${relative === '/verify' ? 'Verification' : title}</title><script src="app.js?v=${serverBuild}" type="application/json"></script>`);
     }
     if (relative === '/api/health') return response.end('online');
+    if (relative === '/api/version') {
+      versionRequests++;
+      if (versionUnavailable) return response.writeHead(503).end();
+      response.setHeader('Content-Type', 'application/json');
+      return response.end(JSON.stringify({ version, build: serverBuild }));
+    }
     const file = path.resolve(publicRoot, '.' + relative);
     if (!file.startsWith(publicRoot + path.sep) || !fs.existsSync(file) || (missingAsset && relative === '/styles.css')) {
       response.writeHead(404); return response.end();
     }
     if (relative.endsWith('.js')) response.setHeader('Content-Type', 'text/javascript');
+    if (relative === '/sw.js') return response.end(workerSource.replaceAll(build, serverBuild));
     fs.createReadStream(file).pipe(response);
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -201,6 +213,57 @@ test('only an installed app shell serves an offline home navigation', async () =
       await page.close();
     }
   } finally { homeUnavailable = false; await context.close(); }
+});
+
+test('online navigation reuses the same build and fetches changed builds without reloading an open tab', async () => {
+  const context = await browser.newContext();
+  try {
+    const openChat = await context.newPage();
+    await openChat.goto(origin);
+    await openChat.evaluate(() => navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' }));
+    await openChat.waitForFunction(() => navigator.serviceWorker.controller);
+    await openChat.evaluate(() => { window.originalShellWorker = navigator.serviceWorker.controller; });
+    await openChat.evaluate(() => caches.open('rai-static-beta-test'));
+
+    const visitor = await context.newPage();
+    const initialHomeRequests = homeRequests;
+    const initialVersionRequests = versionRequests;
+    await visitor.goto(origin + '/?conversation=same-build');
+    assert.equal(await visitor.title(), 'RAI home');
+    assert.equal(versionRequests, initialVersionRequests + 1);
+    assert.equal(homeRequests, initialHomeRequests);
+
+    versionUnavailable = true;
+    await visitor.goto(origin + '/?version-service-down=1');
+    assert.equal(await visitor.title(), 'RAI home');
+    assert.equal(homeRequests, initialHomeRequests);
+    versionUnavailable = false;
+
+    serverBuild = build + '-updated';
+    await visitor.goto(origin + '/?conversation=new-build');
+    assert.equal(await visitor.title(), 'RAI home updated');
+    assert.equal(await openChat.title(), 'RAI home');
+    await visitor.evaluate(async () => (await navigator.serviceWorker.getRegistration()).update());
+    await openChat.waitForFunction(() => {
+      const controller = navigator.serviceWorker.controller;
+      return controller !== window.originalShellWorker && controller?.state === 'activated';
+    });
+    const cachesAfterUpdate = await openChat.evaluate(() => caches.keys());
+    assert.ok(cachesAfterUpdate.includes(`rai-static-root-${version}-${serverBuild}`));
+    assert.ok(!cachesAfterUpdate.includes(`rai-static-root-${version}-${build}`));
+    assert.ok(cachesAfterUpdate.includes('rai-static-beta-test'));
+
+    const updatedHomeRequests = homeRequests;
+    await visitor.goto(origin + '/?conversation=same-new-build');
+    assert.equal(await visitor.title(), 'RAI home updated');
+    assert.equal(homeRequests, updatedHomeRequests);
+    await visitor.goto(origin + '/?rai_refresh=123');
+    assert.equal(homeRequests, updatedHomeRequests + 1);
+  } finally {
+    serverBuild = build;
+    versionUnavailable = false;
+    await context.close();
+  }
 });
 
 test('a worker with a missing shell dependency never activates', async () => {

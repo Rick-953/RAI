@@ -1,4 +1,4 @@
-const RAI_SW_VERSION = '0.13.56-20261120-models62';
+const RAI_SW_VERSION = '0.13.57-20261126-shell-cache';
 const RAI_SCOPE_PATH = new URL(self.registration.scope).pathname.replace(/\/+$/, '') || '';
 const RAI_SCOPE_KEY = RAI_SCOPE_PATH ? RAI_SCOPE_PATH.slice(1).replace(/[^a-z0-9]+/gi, '-') : 'root';
 const RAI_STATIC_CACHE_PREFIX = `rai-static-${RAI_SCOPE_KEY}-`;
@@ -11,31 +11,32 @@ const appPath = (relativePath = '') => {
 const RAI_CACHE_NAME = `${RAI_STATIC_CACHE_PREFIX}${RAI_SW_VERSION}`;
 const RAI_AVATAR_CACHE_NAME = `${RAI_AVATAR_CACHE_PREFIX}${RAI_SW_VERSION}`;
 const RAI_NAVIGATION_FALLBACK = appPath('index.html');
+const RAI_SHELL_BUILD_ID = RAI_SW_VERSION.slice(RAI_SW_VERSION.indexOf('-') + 1);
 const RAI_AVATAR_CACHE_MAX_ENTRIES = 80;
 const RAI_STATIC_ASSETS = [
-  'interactive-visual-schema.js?v=20261120-models62', 'interactive-controls.js?v=20261120-models62',
-  'interactive-visuals.js?v=20261120-models62', 'interactive-visuals.css?v=20261120-models62',
-  'message-details.js?v=20261120-models62', 'message-details.css?v=20261120-models62',
-  'decision-workbench.js?v=20261120-models62', 'decision-workbench.css?v=20261120-models62',
-  'locale.js?v=20261120-models62',
-  'web-skills.js?v=20261120-models62', 'web-skills.css?v=20261120-models62',
-  'third-party-notices.js?v=20261120-models62', 'third-party-notices.css?v=20261120-models62',
+  'interactive-visual-schema.js?v=20261126-shell-cache', 'interactive-controls.js?v=20261126-shell-cache',
+  'interactive-visuals.js?v=20261126-shell-cache', 'interactive-visuals.css?v=20261126-shell-cache',
+  'message-details.js?v=20261126-shell-cache', 'message-details.css?v=20261126-shell-cache',
+  'decision-workbench.js?v=20261126-shell-cache', 'decision-workbench.css?v=20261126-shell-cache',
+  'locale.js?v=20261126-shell-cache',
+  'web-skills.js?v=20261126-shell-cache', 'web-skills.css?v=20261126-shell-cache',
+  'third-party-notices.js?v=20261126-shell-cache', 'third-party-notices.css?v=20261126-shell-cache',
   'third-party-notices.html', 'third-party-notices.js', 'third-party-notices.css', 'locale.js', 'licenses/manifest.json',
-  '', 'index.html', 'runtime-brand.js?v=20261120-models62',
-  'rai-system-prompt.js?v=20261120-models62', 'event-bindings.js?v=20261120-models62',
-  'conversation-cache.js?v=20261120-models62',
-  'lib/jsQR.js?v=20261120-models62', 'qr-scanner.js?v=20261120-models62',
-  'secure-sharing.js?v=20261120-models62', 'secure-sharing.css?v=20261120-models62',
-  'diagnostics.js?v=20261120-models62',
-  'user-activity.js?v=20261120-models62',
-  'token-billing.js?v=20261120-models62',
-  'app.js?v=20261120-models62', 'styles.css?v=20261120-models62',
-  'markdown-tables.js?v=20261120-models62',
-  'cx-remote.js?v=20261120-models62', 'local-agent.css?v=20261120-models62',
-  'crf-ui.js?v=20261120-models62',
-  'selection-explainer.js?v=20261120-models62', 'selection-explainer.css?v=20261120-models62',
-  'site.webmanifest?v=20261120-models62', 'icons/source-search.svg', 'icons/rai-app-icon.svg',
-  'pet-quotes.js?v=20261120-models62',
+  'index.html', 'runtime-brand.js?v=20261126-shell-cache',
+  'rai-system-prompt.js?v=20261126-shell-cache', 'event-bindings.js?v=20261126-shell-cache',
+  'conversation-cache.js?v=20261126-shell-cache',
+  'lib/jsQR.js?v=20261126-shell-cache', 'qr-scanner.js?v=20261126-shell-cache',
+  'secure-sharing.js?v=20261126-shell-cache', 'secure-sharing.css?v=20261126-shell-cache',
+  'diagnostics.js?v=20261126-shell-cache',
+  'user-activity.js?v=20261126-shell-cache',
+  'token-billing.js?v=20261126-shell-cache',
+  'app.js?v=20261126-shell-cache', 'styles.css?v=20261126-shell-cache',
+  'markdown-tables.js?v=20261126-shell-cache',
+  'cx-remote.js?v=20261126-shell-cache', 'local-agent.css?v=20261126-shell-cache',
+  'crf-ui.js?v=20261126-shell-cache',
+  'selection-explainer.js?v=20261126-shell-cache', 'selection-explainer.css?v=20261126-shell-cache',
+  'site.webmanifest?v=20261126-shell-cache', 'icons/source-search.svg', 'icons/rai-app-icon.svg',
+  'pet-quotes.js?v=20261126-shell-cache',
   'images/pets/MasterTea1.webp', 'images/pets/MasterTea1-1.webp',
   'images/pets/MasterTea2.webp', 'images/pets/MasterTea2-1.webp',
   'images/pets/MasterTea3.webp', 'images/pets/MasterTea3-1.webp',
@@ -45,11 +46,13 @@ const RAI_STATIC_ASSETS = [
   'images/pets/MasterTeaDesktop.webp', 'images/pets/MasterTeaDesktop-1.webp',
   'icons/rai-app-icon-192.png', 'icons/rai-app-icon-512.png', 'images/onboarding-saturn.png',
   'icons/settings/notifications.svg', 'icons/settings/notifications_paused.svg', 'icons/settings/security.svg',
-  'lib/marked.min.js?v=20261120-models62', 'lib/purify.min.js?v=20261120-models62',
-  'lib/katex/katex.min.css?v=20261120-models62', 'lib/katex/katex.min.js?v=20261120-models62',
-  'lib/katex/contrib/auto-render.min.js?v=20261120-models62',
-  'lib/highlight/styles/github-dark.min.css?v=20261120-models62',
-  'lib/highlight/highlight.min.js?v=20261120-models62'
+  'icons/settings/about.svg?v=20261126-shell-cache', 'icons/settings/general.svg?v=20261126-shell-cache',
+  'icons/settings/custom.svg?v=20261126-shell-cache',
+  'lib/marked.min.js?v=20261126-shell-cache', 'lib/purify.min.js?v=20261126-shell-cache',
+  'lib/katex/katex.min.css?v=20261126-shell-cache', 'lib/katex/katex.min.js?v=20261126-shell-cache',
+  'lib/katex/contrib/auto-render.min.js?v=20261126-shell-cache',
+  'lib/highlight/styles/github-dark.min.css?v=20261126-shell-cache',
+  'lib/highlight/highlight.min.js?v=20261126-shell-cache'
 ].map(appPath);
 
 function isAvatarRequest(url) {
@@ -58,6 +61,36 @@ function isAvatarRequest(url) {
 
 function isFontRequest(url) {
   return url.pathname.startsWith(appPath('fonts/')) && /\.(?:ttf|otf|woff2?|eot)$/i.test(url.pathname);
+}
+
+async function getAppShell(request) {
+  const cached = await caches.match(RAI_NAVIGATION_FALLBACK, { cacheName: RAI_CACHE_NAME }).catch(() => undefined);
+  if (cached && !new URL(request.url).searchParams.has('rai_refresh')) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 2500);
+    try {
+      const response = await fetch(appPath('api/version'), {
+        cache: 'no-store', credentials: 'omit', signal: controller.signal
+      });
+      if (response.status >= 500) return cached;
+      if (response.ok) {
+        const { version, build } = await response.json();
+        if (`${version}-${build}` === RAI_SW_VERSION) return cached;
+      }
+    } catch {
+      return cached;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  try {
+    const response = await fetch(request, { cache: 'no-store' });
+    return response.status >= 500 && cached ? cached : response;
+  } catch (error) {
+    if (cached) return cached;
+    throw error;
+  }
 }
 
 async function trimCache(cacheName, maxEntries) {
@@ -98,11 +131,13 @@ async function getCachedFontResponse(request) {
 }
 
 self.addEventListener('install', (event) => {
-  event.waitUntil(
-    caches.open(RAI_CACHE_NAME)
-      .then((cache) => cache.addAll(RAI_STATIC_ASSETS))
-      .then(() => self.skipWaiting())
-  );
+  event.waitUntil((async () => {
+    const cache = await caches.open(RAI_CACHE_NAME);
+    await cache.addAll(RAI_STATIC_ASSETS.map(path => new Request(path, { cache: 'reload', credentials: 'omit' })));
+    const index = await (await cache.match(RAI_NAVIGATION_FALLBACK)).text();
+    if (!index.includes(`src="app.js?v=${RAI_SHELL_BUILD_ID}"`)) throw new Error('App shell does not match the service worker build');
+    await self.skipWaiting();
+  })());
 });
 
 self.addEventListener('activate', (event) => {
@@ -149,7 +184,7 @@ self.addEventListener('fetch', (event) => {
   }
 
   if (url.pathname === appPath('') || url.pathname === RAI_NAVIGATION_FALLBACK) {
-    if (request.mode === 'navigate') event.respondWith(fetch(request).catch(() => caches.match(RAI_NAVIGATION_FALLBACK, { cacheName: RAI_CACHE_NAME })));
+    if (request.mode === 'navigate') event.respondWith(getAppShell(request));
     return;
   }
   if (request.mode === 'navigate' || (!RAI_STATIC_ASSETS.includes(url.pathname + url.search) &&

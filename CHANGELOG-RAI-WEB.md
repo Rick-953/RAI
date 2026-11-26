@@ -1,3 +1,7 @@
+## 0.13.57 - 2026-11-26
+
+- Reuse the cached application shell after an uncached version and build check. A new build loads on the next navigation. Open conversations continue, and a manual refresh preserves the locally cached assets.
+
 ## 0.13.56 - 2026-11-20
 
 - Replace Astra and Sol with GPT 6.2 in chat and research. Retired IDs route to the corresponding new model; existing conversations, administrator switches and rolling 24-hour usage carry over.
