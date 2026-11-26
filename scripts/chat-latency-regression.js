@@ -96,6 +96,14 @@ async function main() {
     const seen = [], observe = createSseObserver(kind => seen.push(kind));
     for (const byte of Buffer.from(': ping\n\ndata: {"choices":[{"delta":{"content":" "},"finish_reason":"stop"}]}\n\n'+event({reasoning_content:'思考'})+event({content:'正文'}))) observe(Uint8Array.of(byte));
     assert.deepEqual(seen, ['reasoning','content']);
+    const officialKinds = [], observeOfficial = createSseObserver(kind => officialKinds.push(kind));
+    for (const item of [
+        { type: 'response.output_item.added', item: { type: 'reasoning' } },
+        { type: 'response.output_item.added', item: { type: 'function_call', name: 'read_file' } },
+        { type: 'response.function_call_arguments.delta', delta: '{}' },
+        { type: 'response.output_text.delta', delta: 'answer' }
+    ]) observeOfficial('data: '+JSON.stringify(item)+'\n\n');
+    assert.deepEqual(officialKinds, ['tool', 'content']);
     const bounded = [], observeBounded = createSseObserver(kind => bounded.push(kind));
     observeBounded(event({ content: 'x'.repeat(200000) }));
     observeBounded(event({ reasoning_content: 'ok' }));
