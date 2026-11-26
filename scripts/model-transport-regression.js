@@ -76,6 +76,7 @@ async function verify() {
     const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'rai-model-tls-'));
     const keyFile = path.join(temp, 'key.pem');
     const certFile = path.join(temp, 'cert.pem');
+    const traceFile = path.join(temp, 'probe.log');
     const servers = [];
     const sockets = new Set();
     const system = Object.fromEntries(Object.entries(process.env).filter(([name]) => /^(path|systemroot|ld_library_path)$/i.test(name)));
@@ -92,18 +93,26 @@ async function verify() {
     }
 
     async function probe(base, protocol, { mode = 'complete', trace = false, trust = true, env = {} } = {}) {
-        const child = spawn(process.execPath, [
-            ...process.execArgv, ...(trace ? ['--trace-tls'] : []),
-            __filename, '--loopback-request', base + '/v1', protocol, mode
-        ], {
-            env: { ...nodeEnv, NODE_EXTRA_CA_CERTS: trust ? certFile : '', ...env },
-            stdio: ['ignore', 'ignore', 'pipe'], timeout: 10000
-        });
-        let stderr = '';
-        child.stderr.setEncoding('utf8').on('data', chunk => { stderr += chunk; });
-        const [code, signal] = await once(child, 'close');
-        if (code !== 0) throw Object.assign(new Error(`Loopback request failed (${signal || code})`), { stderr });
-        return stderr;
+        // OpenSSL writes its native trace synchronously. A nonblocking pipe can drop a large ClientHello.
+        const output = fs.openSync(traceFile, 'w+', 0o600);
+        try {
+            const child = spawn(process.execPath, [
+                ...process.execArgv, ...(trace ? ['--trace-tls'] : []),
+                __filename, '--loopback-request', base + '/v1', protocol, mode
+            ], {
+                env: { ...nodeEnv, NODE_EXTRA_CA_CERTS: trust ? certFile : '', ...env },
+                stdio: ['ignore', 'ignore', output], timeout: 10000
+            });
+            const [code, signal] = await once(child, 'close');
+            let stderr = '';
+            for await (const chunk of fs.createReadStream(null, { fd: output, start: 0, autoClose: false, encoding: 'utf8' })) {
+                stderr += chunk;
+            }
+            if (code !== 0) throw Object.assign(new Error(`Loopback request failed (${signal || code})`), { stderr });
+            return stderr;
+        } finally {
+            fs.closeSync(output);
+        }
     }
 
     try {
@@ -176,6 +185,7 @@ async function verify() {
         await Promise.all(servers.map(server => new Promise(resolve => server.close(resolve))));
         fs.rmSync(keyFile, { force: true });
         fs.rmSync(certFile, { force: true });
+        fs.rmSync(traceFile, { force: true });
         fs.rmdirSync(temp);
     }
 }
