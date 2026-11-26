@@ -3,7 +3,7 @@
   "product": "RAI Web",
   "scopeNote": "Production npm lock dependencies; browser libraries and fonts; all locked Cargo dependencies for the optional RAI Desktop and Local Agent, including build and target-specific crates. Development-only npm tools are excluded. Brand names and logos belong to their respective owners.",
   "inputs": {
-    "package-lock.json": "33aeae0450d8e67695d34145bd90eecd98f6a4d1f9b1082ea7a7107e0d96bc23",
+    "package-lock.json": "d00bcd7c70b842b62e476ca116bad5efdedd2c0acd4d400c1bb9b2de3bb4fea1",
     "public/lib/vendor-manifest.json": "6a86dcbb79a57b7ffa8a844f7f0188f3c1e5427bd7dfe4445bfb94d870277d8e",
     "src-tauri/Cargo.lock": "ff871fec78c946aa9062b5852e348c00198a4e692a7f55116dbc6e43bea1d89d",
     "rai-agent/Cargo.lock": "c3e99a2b2a6c3438827eee5380ffbed041081ea7c6e77fc6c2f5d89c39d6cde4"

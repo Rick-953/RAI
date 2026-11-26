@@ -1,3 +1,7 @@
+## 0.13.58 - 2026-11-26
+
+- Keep each answer on one model through generation and tool continuations. The shared backend applies this to RAI Web and CX RAI.
+
 ## 0.13.57 - 2026-11-26
 
 - Reuse the cached application shell after an uncached version and build check. A new build loads on the next navigation. Open conversations continue, and a manual refresh preserves the locally cached assets.
