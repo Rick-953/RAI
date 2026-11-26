@@ -220,14 +220,9 @@ function createProviderMock() {
 
       if (scenario === 'retry-primary') {
         const attempt = observations.filter(item => item.scenario === scenario).length;
-        if (attempt <= 3) {
-          response.writeHead(200, { 'Content-Type': 'text/event-stream' });
-          response.end(`data: ${JSON.stringify(openAiText(`partial-${attempt} `, null))}\n\n`);
-        } else {
-          assert.equal(attempt, 4, 'initial attempt plus three retries');
-          assert.ok(text.includes('partial-1') && text.includes('partial-3'), 'retry preserves received text');
-          writeSse(response, [openAiText(FINAL_TEXT)]);
-        }
+        assert.equal(attempt, 1, 'an accepted GPT stream is never replayed');
+        response.writeHead(200, { 'Content-Type': 'text/event-stream' });
+        response.end(`data: ${JSON.stringify(openAiText('partial-1 ', null))}\n\n`);
         return;
       }
 
@@ -235,8 +230,6 @@ function createProviderMock() {
         if (hasToolResult) {
           const primary = request.url.startsWith('/primary/');
           const transient = scenario === 'client-continuation-gpt-transient';
-          const primaryAttempts = observations.filter(item => item.scenario === scenario && item.hasToolResult && item.url.startsWith('/primary/')).length;
-          if (transient && primary && primaryAttempts === 2) { writeSse(response, [openAiText(FINAL_TEXT)]); return; }
           response.writeHead(transient && primary ? 503 : 402, { 'Content-Type': 'application/json' });
           response.end(JSON.stringify({ error: 'PRIVATE_PROVIDER_BILLING_BODY' }));
         } else writeSse(response, [scenario.endsWith('-reasoning') ? { choices: [{ delta: { reasoning_content: 'Checkpoint reasoning.' } }] }
@@ -250,14 +243,10 @@ function createProviderMock() {
         if (results.length === 5) {
           const attempts = observations.filter(item => item.scenario === scenario
             && (item.body.messages || []).filter(message => message.role === 'tool').length === 5).length;
-          if (attempts <= 3) {
-            if (attempts > 1) assert.ok(text.includes('round-partial-1'), 'partial text reaches the continuation');
-            response.writeHead(200, { 'Content-Type': 'text/event-stream' });
-            response.end(`data: ${JSON.stringify(openAiText(`round-partial-${attempts} `, null))}\n\n`);
-            return;
-          }
-          assert.equal(attempts, 4, 'tool continuation retries exactly three times');
-          assert.equal(results.length, 5, 'completed tool results survive every retry');
+          assert.equal(attempts, 1, 'an accepted GPT tool continuation is never replayed');
+          response.writeHead(200, { 'Content-Type': 'text/event-stream' });
+          response.end(`data: ${JSON.stringify(openAiText('round-partial-1 ', null))}\n\n`);
+          return;
         }
         if (results.length < 10) {
           writeSse(response, [{ choices: [{ delta: { tool_calls: [{ index: 0, id: `round_${results.length}`, type: 'function',
@@ -536,6 +525,17 @@ async function runChat(baseUrl, token, { scenario, model, memoryMode = 'normal',
     .filter((line) => line.startsWith('data: ') && line !== 'data: [DONE]')
     .map((line) => JSON.parse(line.slice(6)));
   const visible = events.filter((event) => event.type === 'content').map((event) => event.content || '').join('');
+  if (scenario === 'retry-primary' || scenario === 'fallback') {
+    assert.ok(!events.some(event => event.type === 'stream_retry'));
+    if (scenario === 'retry-primary') {
+      assert.equal(visible.trim(), 'partial-1');
+      assert.ok(events.some(event => event.type === 'done' && event.degraded));
+    } else {
+      assert.ok(events.some(event => event.type === 'error'));
+      assert.ok(!events.some(event => event.type === 'done'));
+    }
+    return;
+  }
   assert.match(
     visible,
     new RegExp(FINAL_TEXT.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
@@ -543,7 +543,6 @@ async function runChat(baseUrl, token, { scenario, model, memoryMode = 'normal',
   );
   assert.doesNotMatch(visible, /read_skill|function_calls|<invoke|tool_call_begin|"arguments"/, `${scenario}: tool protocol leaked`);
   assert.ok(events.some((event) => event.type === 'done'), `${scenario}: done event missing`);
-  if (scenario === 'retry-primary') assert.equal(events.filter(event => event.type === 'stream_retry').length, 3);
 }
 
 async function runClientChat(baseUrl, token, softwareKey, selected, scenario, sessionId) {
@@ -648,18 +647,25 @@ async function runClientChat(baseUrl, token, softwareKey, selected, scenario, se
       }
     }
   }
-  if (paymentScenario) {
+  if (paymentScenario || transientFallback) {
     assert.equal(done, true);
     assert.equal(degraded, true, 'an upstream billing failure must never complete the task');
     assert.match(visible, scenario.endsWith('-reasoning') ? /HTTP 402/ : /Checkpoint retained/);
     assert.equal(pending, 1, 'the completed tool must not be replayed after HTTP 402');
     assert.equal(retries, 0, 'billing failures are not transient transport retries');
     assert.equal(warnings.length, 1);
-    assert.equal(warnings[0].status, 402);
+    assert.equal(warnings[0].status, transientFallback ? 503 : 402);
     assert.equal(warnings[0].code, 'provider_continuation_http_failed');
-    assert.match(warnings[0].message, /HTTP 402.*额度或计费不可用/);
+    assert.match(warnings[0].message, transientFallback ? /HTTP 503/ : /HTTP 402.*额度或计费不可用/);
     assert.doesNotMatch(JSON.stringify(warnings), /PRIVATE_PROVIDER_BILLING_BODY/);
     assert.ok(!modelInfos.some(info => info.provider === 'deepseek_official'), 'a rejected fallback must not claim that it took over generation');
+    return;
+  }
+  if (scenario === 'client-rounds-retry') {
+    assert.ok(done && degraded);
+    assert.match(visible, /round-partial-1/);
+    assert.equal(retries, 0);
+    assert.equal(pending, 5);
     return;
   }
   if (scenario === 'client-context-limit') {
@@ -673,13 +679,6 @@ async function runClientChat(baseUrl, token, softwareKey, selected, scenario, se
     assert.deepEqual(warnings, []);
   }
   assert.equal(done, true);
-  if (transientFallback) {
-    assert.equal(retries, 1, 'retry the temporarily unavailable original GPT through the existing budget');
-    assert.equal(pending, 1, 'the completed client operation executes exactly once across model retries');
-    assert.ok(!modelInfos.some(info => info.provider === 'deepseek_official'), 'an HTTP 402 fallback never reports successful takeover');
-    return;
-  }
-  if (scenario === 'client-rounds-retry') assert.equal(retries, 3);
   if (scenario === 'client-long-word') assert.equal(compressed, 1, 'a long Word turn compacts once and reuses the result');
   if (scenario === 'client-large-context') assert.ok(compressed > 0 && compressed < 8, 'large results compact only when needed');
   if (scenario === 'client-pretruncated') assert.equal(truncated, 1, 'a result truncated by the client is reported once');
@@ -871,8 +870,11 @@ async function main() {
     const settingsOnly = process.argv.includes('--native-settings-only');
     if (continuationFallbackOnly) {
       await runClientChat(baseUrl, token, softwareKey, [], 'client-continuation-gpt-transient');
+      const continuations = provider.observations.filter(item => item.scenario === 'client-continuation-gpt-transient' && item.hasToolResult);
+      assert.equal(continuations.length, 1);
+      assert.ok(continuations[0].url.startsWith('/primary/'));
       assert.deepEqual(provider.errors, []);
-      console.log('PASS transient GPT failure and rejected billing fallback retry the original model without replaying the completed tool');
+      console.log('PASS GPT tool continuation HTTP 503 stops generation without replaying the completed tool');
       return;
     }
     if (process.argv.includes('--agent-office-only')) {
@@ -958,13 +960,13 @@ async function main() {
       console.log('native settings runtime regression passed: Chinese/English navigation, registered list/get, forced list and synthetic client-result continuation (no real settings changed)');
       return;
     }
-    assert.ok(provider.observations.some((item) => item.scenario === 'fallback' && item.url.includes('/deepseek/')),
-      'runtime fallback did not reach the configured secondary provider');
+    assert.deepEqual(provider.observations.filter(item => item.scenario === 'fallback').map(item => item.body.model), ['gpt-6.2-sol'],
+      'a rejected GPT request must not reach another model');
     assert.ok(provider.observations.some((item) => (
       ['limits', 'invalid', 'memory-off'].includes(item.scenario)
         && item.body?.model === 'gpt-6.2-sol'
-    )), 'successful direct official failover must not poison subsequent primary tool requests');
-    console.log('skill loader runtime regression passed (GPT 6.2 Sol/Luna/DeepSeek V4.1 Flash/Astra/official fallback)');
+    )), 'a rejected GPT request must not poison subsequent primary tool requests');
+    console.log('skill loader runtime regression passed (GPT 6.2 Sol/Luna/DeepSeek V4.1 Flash/Astra)');
   } catch (error) {
     throw new Error(`${error.stack || error.message}\n--- runtime log tail ---\n${logs.value}`);
   } finally {

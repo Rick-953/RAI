@@ -600,7 +600,7 @@ function testFocusedModelUiReasoningAndSwipe() {
     'legacy mode IDs must resolve through their administrator-configured defaults');
   assert.match(server, /const defaults = await resolveModeDefaults\(prefix\)/);
   assert.match(server, /const fetchGptProvider = createGptPrimaryFetch/);
-  assert.match(server, /fallbackFetch: fetchGptFastProvider/);
+  assert.match(server, /fallbackFetch: fetchChatProviderWithLatency/);
   assert.match(server, /officialUrl: DEEPSEEK_CHAT_COMPLETIONS_URL/);
   assert.doesNotMatch(server.match(/const MODEL_ROUTING = \{[\s\S]*?\n\};/)?.[0] || '', /'deepseek-pro':\s*\{/);
   assert.match(server, /'gpt-5\.6-terra': 'deepseek-v4.1-flash'/,

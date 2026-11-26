@@ -166,11 +166,12 @@ async function main(){
    assert.equal((officialLuna?smartBody.reasoning.effort:smartBody.reasoning_effort),'none','Smart without explicit effort uses administrator thinking-off default');
    assert.equal((await dbGet(db,"SELECT model FROM messages WHERE session_id=? AND role='assistant' ORDER BY id DESC LIMIT 1",[provenanceChat])).model,'gpt-6-luna');
    mode='failure';const failed=await chat('gpt-6.2-sol');assert.ok(failed.events.some(x=>x.type==='error'),failed.raw.slice(-3000));assert.equal((await dbGet(db,"SELECT count(*) AS n FROM chat_model_turns WHERE model_id='gpt-6.1-sol' AND status='completed'")).n,2);mode='answer';
-   // The failed upstream trips its circuit: user still selects Sol, actual answer uses DeepSeek.
+   const beforeRecovery=observations.length;
    const rerouted=await chat('gpt-6.2-sol',{sessionId:provenanceChat,thinkingMode:false});
    const terminalModel=rerouted.events.find(x=>x.type==='done')?.actualModel;
-   assert.equal(terminalModel,dsModel,rerouted.raw.slice(-2000));
-   assert.equal((await dbGet(db,"SELECT model FROM messages WHERE session_id=? AND role='assistant' ORDER BY id DESC LIMIT 1",[provenanceChat])).model,terminalModel,'history must preserve rerouted upstream ID, not selected Sol');
+   assert.equal(terminalModel,'gpt-6.2-sol',rerouted.raw.slice(-2000));
+   assert.deepEqual(observations.slice(beforeRecovery).filter(request=>request.body.stream).map(request=>request.body.model),[terminalModel]);
+   assert.equal((await dbGet(db,"SELECT model FROM messages WHERE session_id=? AND role='assistant' ORDER BY id DESC LIMIT 1",[provenanceChat])).model,terminalModel,'history preserves the actual Sol model');
    assert.equal((await dbGet(db,'SELECT points FROM users')).points,0,'chat must not debit points');
    // Real login + software identity + chat -> approved PC -> one-shot tool -> continuation.
    const {createSoftwareClientAuth}=require('../lib/software-client-auth');

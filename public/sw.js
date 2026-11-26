@@ -1,4 +1,4 @@
-const RAI_SW_VERSION = '0.13.57-20261126-shell-cache';
+const RAI_SW_VERSION = '0.13.58-20261126-one-model-per-answer';
 const RAI_SCOPE_PATH = new URL(self.registration.scope).pathname.replace(/\/+$/, '') || '';
 const RAI_SCOPE_KEY = RAI_SCOPE_PATH ? RAI_SCOPE_PATH.slice(1).replace(/[^a-z0-9]+/gi, '-') : 'root';
 const RAI_STATIC_CACHE_PREFIX = `rai-static-${RAI_SCOPE_KEY}-`;
@@ -14,29 +14,29 @@ const RAI_NAVIGATION_FALLBACK = appPath('index.html');
 const RAI_SHELL_BUILD_ID = RAI_SW_VERSION.slice(RAI_SW_VERSION.indexOf('-') + 1);
 const RAI_AVATAR_CACHE_MAX_ENTRIES = 80;
 const RAI_STATIC_ASSETS = [
-  'interactive-visual-schema.js?v=20261126-shell-cache', 'interactive-controls.js?v=20261126-shell-cache',
-  'interactive-visuals.js?v=20261126-shell-cache', 'interactive-visuals.css?v=20261126-shell-cache',
-  'message-details.js?v=20261126-shell-cache', 'message-details.css?v=20261126-shell-cache',
-  'decision-workbench.js?v=20261126-shell-cache', 'decision-workbench.css?v=20261126-shell-cache',
-  'locale.js?v=20261126-shell-cache',
-  'web-skills.js?v=20261126-shell-cache', 'web-skills.css?v=20261126-shell-cache',
-  'third-party-notices.js?v=20261126-shell-cache', 'third-party-notices.css?v=20261126-shell-cache',
+  'interactive-visual-schema.js?v=20261126-one-model-per-answer', 'interactive-controls.js?v=20261126-one-model-per-answer',
+  'interactive-visuals.js?v=20261126-one-model-per-answer', 'interactive-visuals.css?v=20261126-one-model-per-answer',
+  'message-details.js?v=20261126-one-model-per-answer', 'message-details.css?v=20261126-one-model-per-answer',
+  'decision-workbench.js?v=20261126-one-model-per-answer', 'decision-workbench.css?v=20261126-one-model-per-answer',
+  'locale.js?v=20261126-one-model-per-answer',
+  'web-skills.js?v=20261126-one-model-per-answer', 'web-skills.css?v=20261126-one-model-per-answer',
+  'third-party-notices.js?v=20261126-one-model-per-answer', 'third-party-notices.css?v=20261126-one-model-per-answer',
   'third-party-notices.html', 'third-party-notices.js', 'third-party-notices.css', 'locale.js', 'licenses/manifest.json',
-  'index.html', 'runtime-brand.js?v=20261126-shell-cache',
-  'rai-system-prompt.js?v=20261126-shell-cache', 'event-bindings.js?v=20261126-shell-cache',
-  'conversation-cache.js?v=20261126-shell-cache',
-  'lib/jsQR.js?v=20261126-shell-cache', 'qr-scanner.js?v=20261126-shell-cache',
-  'secure-sharing.js?v=20261126-shell-cache', 'secure-sharing.css?v=20261126-shell-cache',
-  'diagnostics.js?v=20261126-shell-cache',
-  'user-activity.js?v=20261126-shell-cache',
-  'token-billing.js?v=20261126-shell-cache',
-  'app.js?v=20261126-shell-cache', 'styles.css?v=20261126-shell-cache',
-  'markdown-tables.js?v=20261126-shell-cache',
-  'cx-remote.js?v=20261126-shell-cache', 'local-agent.css?v=20261126-shell-cache',
-  'crf-ui.js?v=20261126-shell-cache',
-  'selection-explainer.js?v=20261126-shell-cache', 'selection-explainer.css?v=20261126-shell-cache',
-  'site.webmanifest?v=20261126-shell-cache', 'icons/source-search.svg', 'icons/rai-app-icon.svg',
-  'pet-quotes.js?v=20261126-shell-cache',
+  'index.html', 'runtime-brand.js?v=20261126-one-model-per-answer',
+  'rai-system-prompt.js?v=20261126-one-model-per-answer', 'event-bindings.js?v=20261126-one-model-per-answer',
+  'conversation-cache.js?v=20261126-one-model-per-answer',
+  'lib/jsQR.js?v=20261126-one-model-per-answer', 'qr-scanner.js?v=20261126-one-model-per-answer',
+  'secure-sharing.js?v=20261126-one-model-per-answer', 'secure-sharing.css?v=20261126-one-model-per-answer',
+  'diagnostics.js?v=20261126-one-model-per-answer',
+  'user-activity.js?v=20261126-one-model-per-answer',
+  'token-billing.js?v=20261126-one-model-per-answer',
+  'app.js?v=20261126-one-model-per-answer', 'styles.css?v=20261126-one-model-per-answer',
+  'markdown-tables.js?v=20261126-one-model-per-answer',
+  'cx-remote.js?v=20261126-one-model-per-answer', 'local-agent.css?v=20261126-one-model-per-answer',
+  'crf-ui.js?v=20261126-one-model-per-answer',
+  'selection-explainer.js?v=20261126-one-model-per-answer', 'selection-explainer.css?v=20261126-one-model-per-answer',
+  'site.webmanifest?v=20261126-one-model-per-answer', 'icons/source-search.svg', 'icons/rai-app-icon.svg',
+  'pet-quotes.js?v=20261126-one-model-per-answer',
   'images/pets/MasterTea1.webp', 'images/pets/MasterTea1-1.webp',
   'images/pets/MasterTea2.webp', 'images/pets/MasterTea2-1.webp',
   'images/pets/MasterTea3.webp', 'images/pets/MasterTea3-1.webp',
@@ -46,13 +46,13 @@ const RAI_STATIC_ASSETS = [
   'images/pets/MasterTeaDesktop.webp', 'images/pets/MasterTeaDesktop-1.webp',
   'icons/rai-app-icon-192.png', 'icons/rai-app-icon-512.png', 'images/onboarding-saturn.png',
   'icons/settings/notifications.svg', 'icons/settings/notifications_paused.svg', 'icons/settings/security.svg',
-  'icons/settings/about.svg?v=20261126-shell-cache', 'icons/settings/general.svg?v=20261126-shell-cache',
-  'icons/settings/custom.svg?v=20261126-shell-cache',
-  'lib/marked.min.js?v=20261126-shell-cache', 'lib/purify.min.js?v=20261126-shell-cache',
-  'lib/katex/katex.min.css?v=20261126-shell-cache', 'lib/katex/katex.min.js?v=20261126-shell-cache',
-  'lib/katex/contrib/auto-render.min.js?v=20261126-shell-cache',
-  'lib/highlight/styles/github-dark.min.css?v=20261126-shell-cache',
-  'lib/highlight/highlight.min.js?v=20261126-shell-cache'
+  'icons/settings/about.svg?v=20261126-one-model-per-answer', 'icons/settings/general.svg?v=20261126-one-model-per-answer',
+  'icons/settings/custom.svg?v=20261126-one-model-per-answer',
+  'lib/marked.min.js?v=20261126-one-model-per-answer', 'lib/purify.min.js?v=20261126-one-model-per-answer',
+  'lib/katex/katex.min.css?v=20261126-one-model-per-answer', 'lib/katex/katex.min.js?v=20261126-one-model-per-answer',
+  'lib/katex/contrib/auto-render.min.js?v=20261126-one-model-per-answer',
+  'lib/highlight/styles/github-dark.min.css?v=20261126-one-model-per-answer',
+  'lib/highlight/highlight.min.js?v=20261126-one-model-per-answer'
 ].map(appPath);
 
 function isAvatarRequest(url) {
