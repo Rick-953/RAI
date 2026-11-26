@@ -135,7 +135,8 @@ self.addEventListener('install', (event) => {
     const cache = await caches.open(RAI_CACHE_NAME);
     await cache.addAll(RAI_STATIC_ASSETS.map(path => new Request(path, { cache: 'reload', credentials: 'omit' })));
     const index = await (await cache.match(RAI_NAVIGATION_FALLBACK)).text();
-    if (!index.includes(`src="app.js?v=${RAI_SHELL_BUILD_ID}"`)) throw new Error('App shell does not match the service worker build');
+    const shellBuild = index.match(/src="app\.js[?]v=([^"]+)"/)?.[1];
+    if (shellBuild !== RAI_SHELL_BUILD_ID) throw new Error('App shell does not match the service worker build');
     await self.skipWaiting();
   })());
 });
