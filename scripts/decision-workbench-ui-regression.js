@@ -513,7 +513,11 @@ async function mobileChecks(browser) {
   const { page } = f;
   try {
     async function fullWidth(width) {
-      await page.waitForFunction(expected => Math.abs(document.getElementById('chatPanel').getBoundingClientRect().width - expected) < 1, width);
+      await page.waitForFunction(expected => {
+        const panel = document.getElementById('decisionWorkbenchPanel');
+        return Math.abs(document.getElementById('chatPanel').getBoundingClientRect().width - expected) < 1
+          && panel.inert && !panel.open && !panel.matches(':modal');
+      }, width);
       const g = await geometry(page);
       near(g.chat.width, width, 'mobile chat keeps the full viewport');
       assert.ok(g.input.right <= width + 1 && g.overflow <= 1);
