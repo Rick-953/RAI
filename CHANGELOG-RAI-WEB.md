@@ -1,3 +1,7 @@
+## 0.13.59 - 2026-11-27
+
+- Use streamed reasoning as soon as it arrives in thinking mode and wait for answer text with thinking off. After a model begins responding, the shared request deadline governs the rest of the stream, including tool continuations.
+
 ## 0.13.58 - 2026-11-26
 
 - Keep each answer on one model through generation and tool continuations. The shared backend applies this to RAI Web and CX RAI.
