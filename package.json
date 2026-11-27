@@ -1,6 +1,6 @@
 {
   "name": "rai",
-  "version": "0.13.58",
+  "version": "0.13.59",
   "packageManager": "npm@11.13.0",
   "engines": {
     "node": "24.16.0",

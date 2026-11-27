@@ -153,7 +153,7 @@ function testServerManagedNativeFallback() {
   assert.match(providerPolicy, /fetchImpl\(officialUrl/,
     'Fast timeout fallback must use the official provider, preserving canonical messages');
   assert.match(providerPolicy, /officialDeepSeekBody\(\{ \.\.\.body/);
-  assert.match(server, /routing\.provider === 'openrouter'[\s\S]{0,120}Math\.min\(primaryAttemptTimeoutMs, 6000\)/,
+  assert.match(server, /routing\.provider === 'openrouter' && !thinkingMode[\s\S]{0,120}Math\.min\(primaryAttemptTimeoutMs, 6000\)/,
     'legacy OpenRouter connection failures must not consume the full provider attempt budget');
   assert.match(server, /if \(fallbackRouting\.provider === 'deepseek'\) \{\s*applyDeepSeekV4ModeParams\(body, !!thinkingMode, normalizedReasoningProfile\)/,
     'DeepSeek fallback requests must retain the primary route thinking policy');

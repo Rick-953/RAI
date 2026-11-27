@@ -241,9 +241,9 @@ async function main() {
     assert.equal(JSON.parse(timeoutCalls[1].options.body).thinking.type,'enabled');
     assert.equal(Object.hasOwn(JSON.parse(timeoutCalls[1].options.body),'reasoning_effort'),false,'Adaptive fallback remains model-managed');
     let deliveredCalls=0;
-    const deliveredProvider=createDeepSeekProviderFetch({primaryUrl:'https://fast.test/v1/chat/completions',primaryKey:'private-test',officialUrl:'https://official.test/v1/chat/completions',officialKey:'official-test',primaryTimeoutMs:25,fetchImpl:async()=>{deliveredCalls++;return new Response('data: {"choices":[{"delta":{"reasoning_content":"thinking"}}]}\n\ndata: {"choices":[{"delta":{"content":"answer"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n');}});
-    const delivered=await deliveredProvider('https://fast.test/v1/chat/completions',{body:JSON.stringify({model:'deepseek-v4.1-flash',stream:true})});
-    assert.match(await delivered.text(),/thinking/);assert.equal(deliveredCalls,1,'effective reasoning delta must prevent fallback/replay');
+    const deliveredProvider=createDeepSeekProviderFetch({primaryUrl:'https://fast.test/v1/chat/completions',primaryKey:'private-test',officialUrl:'https://official.test/v1/chat/completions',officialKey:'official-test',primaryTimeoutMs:25,fetchImpl:async()=>{deliveredCalls++;return new Response('data: {"choices":[{"delta":{"reasoning_content":"thinking"}}]}\n\ndata: {"error":{"code":"upstream_interrupted"}}\n\n');}});
+    const delivered=await deliveredProvider('https://fast.test/v1/chat/completions',{raiThinkingMode:true,body:JSON.stringify({model:'deepseek-v4.1-flash',stream:true})});
+    assert.match(await delivered.text(),/thinking.*upstream_interrupted/s);assert.equal(deliveredCalls,1,'reasoning confirms start even when an error immediately follows in the same chunk');
     const server=fs.readFileSync(path.join(__dirname,'../server.js'),'utf8');const app=fs.readFileSync(path.join(__dirname,'../public/app.js'),'utf8');const html=fs.readFileSync(path.join(__dirname,'../public/index.html'),'utf8');
     for(const id of CHAT_MODEL_IDS){assert.ok(html.includes('data-model="'+id+'"'));assert.ok(app.includes("'"+id+"': {"));}
     for(const id of ['claude-sonnet-5','gemini-3.6-flash-low','nemotron-3-ultra','gpt-image-2','kolors-free'])assert.ok(!html.includes('data-model="'+id+'"'));
@@ -252,7 +252,7 @@ async function main() {
     // long thinking must not be mistaken for a stalled provider.
     assert.match(server, /RAI_CHAT_FIRST_TOKEN_TIMEOUT_MS\) \|\| '20000'/);
     assert.match(server, /CHAT_PROVIDER_FIRST_TOKEN_TIMEOUT_MS/);
-    assert.match(server, /20 秒内无首字或服务失败/);
+    assert.match(server, /未及时返回\$\{expectedOutput\}或服务失败/);
     // Reasoning-only streams are recovered into a real answer instead of being marked truncated.
     assert.match(server, /reasoning-only recovery failed/);
     assert.match(server, /Return only the final user-facing answer as normal assistant content/);

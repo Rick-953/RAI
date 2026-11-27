@@ -5,7 +5,7 @@ const { applyChatReasoningPolicy, officialDeepSeekBody } = require('./lib/chat-r
 const { enforceContextWindow, estimateContextTokens, CONTEXT_WINDOW_TOKENS, CONTEXT_POLICIES, contextPolicyForModel, TOOL_TRUNCATION_MESSAGE, toolResultForContext, truncateToolResult } = require('./lib/context-window');
 const { AsyncLocalStorage } = require('node:async_hooks');
 const { CHAT_MODEL_CATALOG, CHAT_MODEL_IDS, CHAT_MODEL_LIMITS, createChatModelQuotaService } = require('./lib/chat-model-policy');
-const { createDeepSeekProviderFetch } = require('./lib/deepseek-provider-fallback');
+const { awaitChatStreamProgress, createDeepSeekProviderFetch } = require('./lib/deepseek-provider-fallback');
 const { GPT_PRIMARY_MODELS, createGptPrimaryFetch } = require('./lib/gpt-provider-fallback');
 const { createLunaOfficialFetch, toResponsesBody } = require('./lib/luna-official-provider');
 const { estimateDeepSeekInputTokens } = require('./lib/deepseek-tokenizer');
@@ -582,7 +582,6 @@ const GPT_PRIMARY_BASE_URL = normalizeGatewayBaseUrl(cleanEnvValue(process.env.R
 const GPT_PRIMARY_API_KEY_FILE = cleanEnvValue(process.env.RAI_GPT_PRIMARY_API_KEY_FILE);
 const GPT_PRIMARY_API_KEY = GPT_PRIMARY_API_KEY_FILE ? readGatewayApiKeyFile(GPT_PRIMARY_API_KEY_FILE) : '';
 const GPT_PRIMARY_CHAT_URL = joinGatewayEndpoint(GPT_PRIMARY_BASE_URL, 'chat/completions');
-const GPT_PRIMARY_HEADER_TIMEOUT_MS = 6000;
 const LUNA_GATEWAY_BASE_URL = normalizeGatewayBaseUrl(cleanEnvValue(process.env.RAI_LUNA_GATEWAY_BASE_URL) || 'https://api.000339.xyz/v1', { production: IS_PRODUCTION });
 const LUNA_GATEWAY_API_KEY_FILE = cleanEnvValue(process.env.RAI_LUNA_GATEWAY_API_KEY_FILE);
 const LUNA_GATEWAY_API_KEY = LUNA_GATEWAY_API_KEY_FILE ? readGatewayApiKeyFile(LUNA_GATEWAY_API_KEY_FILE) : '';
@@ -6643,12 +6642,14 @@ async function callResearchModelStream({
     let responseHeadersAt = 0;
     try {
         response = await fetchModelProvider(request.apiUrl || request.providerConfig.baseURL, {
+            raiThinkingMode: thinkingMode,
+            raiOnResponseHeaders: () => { responseHeadersAt = Date.now(); },
             method: 'POST',
             headers: request.headers,
             body: JSON.stringify(request.body),
             signal: controller.signal
         });
-        responseHeadersAt = Date.now();
+        responseHeadersAt ||= Date.now();
     } catch (error) {
         clearTimeout(timeoutId);
         if (firstVisibleTimeoutId) clearTimeout(firstVisibleTimeoutId);
@@ -20814,7 +20815,6 @@ const fetchDeepSeekProvider = createDeepSeekProviderFetch({
 const fetchGptProvider = createGptPrimaryFetch({
     primaryUrl: GPT_PRIMARY_CHAT_URL, primaryKey: GPT_PRIMARY_API_KEY,
     fallbackUrl: API_PROVIDERS.rai_gpt_gateway.baseURL, fallbackFetch: fetchChatProviderWithLatency,
-    headerTimeoutMs: GPT_PRIMARY_HEADER_TIMEOUT_MS,
     fetchImpl: fetchChatProviderWithLatency
 });
 const fetchLunaProvider = createLunaOfficialFetch({
@@ -20834,11 +20834,19 @@ async function fetchModelProvider(url, options = {}) {
     if (turn) turn.toolTruncationNotified = false;
     let parsedBody = null;
     try { parsedBody = JSON.parse(options.body || '{}'); } catch (_) { /* non-model request */ }
-    if (!Array.isArray(parsedBody?.messages)) return fetch(url, { ...options, redirect: 'error' });
+    if (!Array.isArray(parsedBody?.messages)) {
+        const response = await fetch(url, { ...options, redirect: 'error' });
+        if (!Array.isArray(parsedBody?.contents) || !new URL(url).pathname.endsWith(':streamGenerateContent')) return response;
+        return awaitChatStreamProgress(response, { stream: true }, {
+            ...options, raiThinkingMode: options.raiThinkingMode ?? turn?.thinkingMode
+        });
+    }
     const modelId = parsedBody?.model || '';
     const protectedModel = Object.values(CHAT_MODEL_LIMITS).some(limits => Object.hasOwn(limits, modelId));
     const gptProviderRequest = url === API_PROVIDERS.rai_gpt_gateway.baseURL;
     const lunaProviderRequest = modelId === 'gpt-6-luna' && url === API_PROVIDERS.rai_luna_gateway.baseURL;
+    const thinkingMode = options.raiThinkingMode ?? turn?.thinkingMode
+        ?? (parsedBody.thinking?.type === 'enabled' || !!(parsedBody.reasoning_effort && parsedBody.reasoning_effort !== 'none'));
     if (turn && protectedModel) {
         if (turn.closed) throw new Error('chat_turn_already_closed');
         if (!turn.reserved.has(modelId)) {
@@ -20928,7 +20936,6 @@ async function fetchModelProvider(url, options = {}) {
         // Only top-level fields are rewritten by the provider policies.
         const bodyForWire = { ...compressedBody };
         const profile = turn?.reasoningProfile || (['low', 'medium', 'high', 'xhigh', 'max'].includes(bodyForWire.reasoning_effort) ? bodyForWire.reasoning_effort : 'low');
-        const thinkingMode = turn ? turn.thinkingMode : bodyForWire.thinking?.type === 'enabled' || !!bodyForWire.reasoning_effort;
         const definition = ADMIN_MODEL_CATALOG.find(item => item.id === bodyForWire.model || (MODEL_ROUTING[item.id]?.model === bodyForWire.model));
         applyChatReasoningPolicy(bodyForWire, { thinkingMode, profile, definition, provider: definition?.provider });
         const outgoing = url === DEEPSEEK_CHAT_COMPLETIONS_URL && definition?.provider === 'deepseek' ? officialDeepSeekBody(bodyForWire, bodyForWire.model) : bodyForWire;
@@ -20937,7 +20944,7 @@ async function fetchModelProvider(url, options = {}) {
     }
     const providerFetch = lunaProviderRequest ? fetchLunaProvider : gptProviderRequest ? fetchGptProvider : fetchDeepSeekProvider;
     if (parsedBody?.messages) turn?.latency?.mark('context_ready');
-    let response = await providerFetch(url, { ...options, raiThinkingMode: turn?.thinkingMode,
+    let response = await providerFetch(url, { ...options, raiThinkingMode: thinkingMode,
         raiLatencyCall: parsedBody?.messages ? turn?.latency?.nextCall() : undefined });
     if (response.ok && response.raiProvider !== 'openai_official') {
         try {
@@ -20962,7 +20969,8 @@ async function fetchModelProvider(url, options = {}) {
             provider: 'mirrorium', thinkingMode: true, reasoningProfile: turn.thinkingMode ? turn.reasoningProfile : 'low' }) + '\n\n');
     }
     if (response.ok && parsedBody?.stream === true && response.raiOfficialFallback && turn?.response && !turn.response.writableEnded) {
-        turn.response.write('data: ' + JSON.stringify({ type: 'model_info', model: 'deepseek-v4.1-flash', actualModel: 'deepseek-flash', provider: 'deepseek_official', reason: 'Fast 20 秒内无首字或服务失败，已切换官方 DeepSeek；未使用 GPT 对话额度' }) + '\n\n');
+        const expectedOutput = thinkingMode ? '思考内容' : '正文';
+        turn.response.write('data: ' + JSON.stringify({ type: 'model_info', model: 'deepseek-v4.1-flash', actualModel: 'deepseek-flash', provider: 'deepseek_official', reason: `Fast 未及时返回${expectedOutput}或服务失败，已切换官方 DeepSeek` }) + '\n\n');
     }
     return response;
 }
@@ -22966,10 +22974,10 @@ if (clientFileExecution && systemPrompt) {
         }, chatRequestBudget.remainingMs());
         audit('chat_route', { requestId, model: finalModel, provider: routing.provider, mode: thinkingMode ? 'thinking' : 'chat', timeoutMs: chatRequestBudget.totalMs }, req);
         const primaryAttemptTimeoutMs = chatRequestBudget.nextAttemptTimeoutMs();
-        const boundedPrimaryAttemptTimeoutMs = routing.provider === 'openrouter'
+        const startupTimeoutMs = routing.provider === 'openrouter' && !thinkingMode
             ? Math.min(primaryAttemptTimeoutMs, 6000)
             : primaryAttemptTimeoutMs;
-        let timeoutId = setTimeout(() => controller.abort(), boundedPrimaryAttemptTimeoutMs);
+        let timeoutId = setTimeout(() => controller.abort(), startupTimeoutMs);
 
         //  关键修复：将变量声明移到try块外部，避免作用域问题
         let fullContent = '';
@@ -23887,7 +23895,7 @@ if (clientFileExecution && systemPrompt) {
                             body: JSON.stringify(fetchBody),
                             signal: controller.signal
                         });
-                        clearTimeout(timeoutId); // Clear this connection timer; the request deadline remains active.
+                        clearTimeout(timeoutId);
                         if (apiResponse.ok) runtimeFallbackCircuit.recordSuccess(finalModel);
                         else if (!chatRequestBudget?.isExpired() && isTransientProviderFailure({ status: apiResponse.status })) {
                             runtimeFallbackCircuit.recordFailure(finalModel);
@@ -25783,6 +25791,7 @@ if (clientFileExecution && systemPrompt) {
                                 body: JSON.stringify(buildStreamRetryBody(continueRequestBody, fullContent.slice(continueContentStart))),
                                 signal: continueController.signal
                             });
+                            clearTimeout(continueTimeoutId);
                             if (!isGeminiAPI) {
                                 conversationMessages = chatModelQuotaContext.getStore()?.contextMessages || conversationMessages;
                                 continueRequestBody.messages = conversationMessages;
@@ -25809,12 +25818,6 @@ if (clientFileExecution && systemPrompt) {
                                 } else {
                                     continueBuffer += continueDecoder.decode(continueValue, { stream: true });
                                 }
-                                // 活动性超时：上游持续有数据就不算卡死。否则长工具调用（大 JSON 参数）
-                                // 在一轮 25s 内输出不完，会被尝试超时误杀成「工具调用中断」。
-                                if (!continueDone && continueTimeoutId && typeof continueTimeoutId.refresh === 'function') {
-                                    continueTimeoutId.refresh();
-                                }
-
                             const continueLines = continueBuffer.split(/\r?\n/);
                             continueBuffer = continueDone ? '' : (continueLines.pop() || '');
                             for (const continueLine of continueLines) {

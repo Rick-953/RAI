@@ -71,6 +71,7 @@ async function main() {
     await run('DELETE FROM provider_token_usage');
 
     const observed = []; let mode = 'answer', actualRequests = 0;
+    let allowAnswer;
     const server = http.createServer(async (req, res) => {
         let text = ''; for await (const chunk of req) text += chunk;
         const body = JSON.parse(text || '{}');
@@ -97,6 +98,10 @@ async function main() {
         res.setHeader('Content-Type', 'text/event-stream');
         emit(res, { type: 'response.created', response: { status: 'in_progress' } });
         await new Promise(resolve => setTimeout(resolve, 15));
+        if (mode === 'thinking') {
+            emit(res, { type: 'response.reasoning_summary_text.delta', delta: 'Thinking before answer.' });
+            await new Promise(resolve => { allowAnswer = resolve; });
+        }
         if (mode === 'tool') {
             emit(res, { type: 'response.output_item.added', output_index: 1, item: { ...output[1], arguments: '' } });
             for (const delta of ['{"query":', '"RAI"}']) emit(res, { type: 'response.function_call_arguments.delta', output_index: 1, delta });
@@ -135,6 +140,13 @@ async function main() {
         assert.equal(billing.actualCacheAgeSeconds, null);
         assert.equal((await store.summary()).daily.find(row => row.provider === 'openai_official').cache_write_12h_tokens, 25);
         assert.ok(observed.every(item => item.url !== '/relay/v1/chat/completions'), 'official admission never contacts the relay');
+        mode = 'thinking';
+        const thought = await createProvider({ firstTokenTimeoutMs: 1000 })(fallbackUrl, {
+            ...options({ ...baseRequest, reasoning_effort: 'high' }), raiThinkingMode: true
+        });
+        allowAnswer?.();
+        assert.equal(thought.raiProvider, 'openai_official', 'translated reasoning must start the original stream before its answer');
+        assert.match(await thought.text(), /Thinking before answer\..*Official answer\./s);
         mode = 'tool';
         const tools = [{ type: 'function', function: { name: 'web_search', parameters: { type: 'object', properties: { query: { type: 'string' } } } } }];
         const toolRequest = { ...baseRequest, tools, reasoning_effort: 'medium' };
