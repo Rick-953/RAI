@@ -22973,7 +22973,11 @@ if (clientFileExecution && systemPrompt) {
             }
         }, chatRequestBudget.remainingMs());
         audit('chat_route', { requestId, model: finalModel, provider: routing.provider, mode: thinkingMode ? 'thinking' : 'chat', timeoutMs: chatRequestBudget.totalMs }, req);
-        let timeoutId = setTimeout(() => controller.abort(), chatRequestBudget.nextAttemptTimeoutMs());
+        const primaryAttemptTimeoutMs = chatRequestBudget.nextAttemptTimeoutMs();
+        const startupTimeoutMs = routing.provider === 'openrouter' && !thinkingMode
+            ? Math.min(primaryAttemptTimeoutMs, 6000)
+            : primaryAttemptTimeoutMs;
+        let timeoutId = setTimeout(() => controller.abort(), startupTimeoutMs);
 
         //  关键修复：将变量声明移到try块外部，避免作用域问题
         let fullContent = '';
